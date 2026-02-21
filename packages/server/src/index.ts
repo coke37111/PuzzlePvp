@@ -6,7 +6,7 @@ import { MatchmakingQueue } from './matchmaking/MatchmakingQueue';
 import { GameRoom } from './rooms/GameRoom';
 import { SocketEvent } from '@puzzle-pvp/shared';
 
-const PORT = 4000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 4000;
 
 const app = express();
 app.use(cors());

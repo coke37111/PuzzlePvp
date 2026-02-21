@@ -15,7 +15,7 @@ import {
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
-const SERVER_URL = 'http://localhost:4000';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:4000';
 
 export class SocketClient {
   private static _instance: SocketClient | null = null;
