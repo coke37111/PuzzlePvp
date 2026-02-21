@@ -15,7 +15,8 @@ import {
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:4000';
+// 개발: localhost:4000 / 프로덕션: 같은 오리진 (서버가 클라이언트도 서빙)
+const SERVER_URL = import.meta.env.DEV ? 'http://localhost:4000' : window.location.origin;
 
 export class SocketClient {
   private static _instance: SocketClient | null = null;

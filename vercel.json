@@ -1,5 +1,0 @@
-{
-  "buildCommand": "npm ci && npm run build:shared && npm run build --workspace=packages/client",
-  "outputDirectory": "packages/client/dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
-}
