@@ -211,10 +211,13 @@ export class GameScene extends Phaser.Scene {
 
   private drawEnemyZones(): void {
     const size = this.mapData.size;
-    const enemySpawns = this.serverSpawnPoints.filter(sp => sp.ownerId !== this.myPlayerId);
+    const drawnKeys = new Set<string>();
 
-    for (const sp of enemySpawns) {
+    // 모든 스폰포인트 주변을 표시 (적=설치불가, 아군=적 설치불가)
+    for (const sp of this.serverSpawnPoints) {
+      const isEnemy = sp.ownerId !== this.myPlayerId;
       const color = PLAYER_COLORS[sp.ownerId];
+
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           const nx = sp.x + dx;
@@ -223,12 +226,16 @@ export class GameScene extends Phaser.Scene {
 
           const tileIdx = this.mapData.tiles[ny][nx];
           if (tileIdx < EMPTY_TILE_INDEX) continue;
-          // 스폰포인트 자체 + 블록은 이미 설치 불가이므로 오버레이 불필요
           if (tileIdx === 2 || tileIdx === 3 || tileIdx === 7) continue;
 
           const key = `${nx},${ny}`;
-          if (this.enemyZoneTiles.has(key)) continue;
-          this.enemyZoneTiles.add(key);
+
+          // 설치 불가 추적은 적 스폰 주변만
+          if (isEnemy) this.enemyZoneTiles.add(key);
+
+          // 오버레이는 중복 없이 모두 표시
+          if (drawnKeys.has(key)) continue;
+          drawnKeys.add(key);
 
           const px = nx * TILE_SIZE + TILE_SIZE / 2;
           const py = ny * TILE_SIZE + TILE_SIZE / 2;
