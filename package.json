@@ -1,0 +1,16 @@
+{
+  "name": "puzzle-pvp",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/client"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=packages/server",
+    "dev:client": "npm run dev --workspace=packages/client",
+    "build:shared": "npm run build --workspace=packages/shared",
+    "build": "npm run build:shared && npm run build --workspace=packages/server && npm run build --workspace=packages/client"
+  }
+}
