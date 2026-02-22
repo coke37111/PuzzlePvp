@@ -8,7 +8,6 @@ export class BallSimulationInstance {
   ball: BallModel;
   direction: Direction;
   currentTile: TileModel;
-  previousTile: TileModel | undefined;
   reserveTile: TileModel | undefined;
   reserveTilePhase: number = 0;
   isMoving: boolean = true;

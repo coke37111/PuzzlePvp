@@ -20,7 +20,6 @@ import {
   createBattleTileRegistry,
   MapModel,
   EMPTY_TILE_INDEX,
-  EndReason,
 } from '@puzzle-pvp/shared';
 
 import {
@@ -41,7 +40,6 @@ import { drawGridLines } from '../visual/GridRenderer';
 import {
   animBallSpawn,
   animBallEnd,
-  animBallCrash,
   animReflectorPlace,
   animHpBar,
   animDamageFlash,
@@ -725,34 +723,21 @@ export class GameScene extends Phaser.Scene {
       this.tweens.killTweensOf(visual.circle);
       this.tweens.killTweensOf(visual.shine);
 
-      const onDestroy = () => {
-        visual.circle.destroy();
-        visual.shine.destroy();
-        this.ballVisuals.delete(msg.ballId);
-        this.endingBalls.delete(msg.ballId);
-      };
-
-      if (msg.reason === EndReason.Crash) {
-        animBallCrash(
-          this,
-          this.ballsLayer,
-          [visual.circle, visual.shine],
-          visual.circle.x,
-          visual.circle.y,
-          onDestroy,
-        );
-      } else {
-        const color = this.getTeamColor(visual.ownerId);
-        animBallEnd(
-          this,
-          this.ballsLayer,
-          [visual.circle, visual.shine],
-          visual.circle.x,
-          visual.circle.y,
-          color,
-          onDestroy,
-        );
-      }
+      const color = this.getTeamColor(visual.ownerId);
+      animBallEnd(
+        this,
+        this.ballsLayer,
+        [visual.circle, visual.shine],
+        visual.circle.x,
+        visual.circle.y,
+        color,
+        () => {
+          visual.circle.destroy();
+          visual.shine.destroy();
+          this.ballVisuals.delete(msg.ballId);
+          this.endingBalls.delete(msg.ballId);
+        },
+      );
     };
 
     this.socket.onSpawnHp = (msg: SpawnHpMsg) => {

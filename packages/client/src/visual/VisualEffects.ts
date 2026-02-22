@@ -74,47 +74,6 @@ export function animBallEnd(
   }
 }
 
-/** 충돌 소멸: 흰색+노란색 12방향 파티클 폭발 */
-export function animBallCrash(
-  scene: Phaser.Scene,
-  container: Phaser.GameObjects.Container,
-  targets: Phaser.GameObjects.GameObject[],
-  cx: number,
-  cy: number,
-  onComplete: () => void,
-): void {
-  scene.tweens.add({
-    targets,
-    scaleX: 0.1,
-    scaleY: 0.1,
-    alpha: 0,
-    duration: 100,
-    ease: 'Quad.easeIn',
-    onComplete,
-  });
-
-  const colors = [0xffffff, 0xffee44, 0xffffff, 0xffee44, 0xffffff, 0xffee44,
-                  0xffffff, 0xffee44, 0xffffff, 0xffee44, 0xffffff, 0xffee44];
-  for (let i = 0; i < 12; i++) {
-    const rad = Phaser.Math.DegToRad(i * 30);
-    const particle = scene.add.graphics();
-    particle.fillStyle(colors[i], 1.0);
-    particle.fillCircle(0, 0, i % 2 === 0 ? 4 : 2);
-    particle.setPosition(cx, cy);
-    container.add(particle);
-
-    scene.tweens.add({
-      targets: particle,
-      x: cx + Math.cos(rad) * 32,
-      y: cy + Math.sin(rad) * 32,
-      alpha: 0,
-      duration: 150,
-      ease: 'Quad.easeOut',
-      onComplete: () => particle.destroy(),
-    });
-  }
-}
-
 /** 반사판 설치 피드백: 타일 플래시 + scale 바운스 */
 export function animReflectorPlace(
   scene: Phaser.Scene,

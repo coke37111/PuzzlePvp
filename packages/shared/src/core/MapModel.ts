@@ -120,7 +120,7 @@ export class MapModel {
   }
 }
 
-// 배틀용 기본 맵 생성 (11x11)
+// 배틀용 기본 맵 생성 (7x7)
 export function createBattleMap(tileRegistry: Map<number, TileData>): MapModel {
   const mapModel = new MapModel(tileRegistry);
   mapModel.load(createDefaultBattleMapData());
@@ -128,11 +128,11 @@ export function createBattleMap(tileRegistry: Map<number, TileData>): MapModel {
 }
 
 export function createDefaultBattleMapData(): MapData {
-  const SIZE = 11;
+  const SIZE = 7;
   // TileRegistry의 TILE_INDEX와 일치:
   // 1 = Empty, 2 = Start(오른쪽발사=P1), 3 = Start(왼쪽발사=P2), 7 = Block
   // P1 스폰: x=0 열, → 오른쪽으로 발사 (uniqueIndex=2)
-  // P2 스폰: x=10 열, → 왼쪽으로 발사 (uniqueIndex=3)
+  // P2 스폰: x=6 열, → 왼쪽으로 발사 (uniqueIndex=3)
   const E = 1; // Empty (반사판 설치 가능)
   const L = 2; // Start Left-side (P1, 오른쪽으로 발사)
   const R = 3; // Start Right-side (P2, 왼쪽으로 발사)
@@ -141,27 +141,19 @@ export function createDefaultBattleMapData(): MapData {
 
   const tiles: number[][] = [
     // y=0
-    [_, E, E, E, E, E, E, E, E, E, _],
-    // y=1
-    [E, E, E, E, E, E, E, E, E, E, E],
-    // y=2  P1스폰                               P2스폰
-    [L, E, E, E, B, E, B, E, E, E, R],
-    // y=3
-    [E, E, E, E, E, E, E, E, E, E, E],
+    [_, E, E, E, E, E, _],
+    // y=1  P1스폰              P2스폰
+    [L, E, E, E, E, E, R],
+    // y=2
+    [E, E, E, B, E, E, E],
+    // y=3 (중앙)
+    [E, E, E, E, E, E, E],
     // y=4
-    [E, E, E, E, E, E, E, E, E, E, E],
-    // y=5 (중앙 장애물)
-    [E, E, E, E, E, B, E, E, E, E, E],
+    [E, E, E, B, E, E, E],
+    // y=5  P1스폰              P2스폰
+    [L, E, E, E, E, E, R],
     // y=6
-    [E, E, E, E, E, E, E, E, E, E, E],
-    // y=7
-    [E, E, E, E, E, E, E, E, E, E, E],
-    // y=8  P1스폰                               P2스폰
-    [L, E, E, E, B, E, B, E, E, E, R],
-    // y=9
-    [E, E, E, E, E, E, E, E, E, E, E],
-    // y=10
-    [_, E, E, E, E, E, E, E, E, E, _],
+    [_, E, E, E, E, E, _],
   ];
 
   return { size: SIZE, tiles };
