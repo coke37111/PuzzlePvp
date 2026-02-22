@@ -293,7 +293,7 @@ export class BallSimulator {
       }
     }
 
-    // 2. 같은 타일 2개 이상이면 쌍으로 소멸 (팀 무관)
+    // 2. 같은 타일 2개 이상이면 쌍으로 소멸 (팀 무관, 반사판 타일 제외)
     const tileMap = new Map<number, BallSimulationInstance[]>();
     for (const inst of active.filter(i => !i.isEnd)) {
       const key = inst.currentTile.index;
@@ -303,6 +303,8 @@ export class BallSimulator {
 
     for (const [, group] of tileMap) {
       if (group.length < 2) continue;
+      // 반사판이 있는 타일은 각자 반사되므로 충돌 없음
+      if (this.getReflectorType(group[0].currentTile) !== ReflectorType.None) continue;
       const pairs = Math.floor(group.length / 2);
       for (let k = 0; k < pairs; k++) {
         const a = group[k * 2], b = group[k * 2 + 1];
