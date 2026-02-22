@@ -1,6 +1,31 @@
 import { TileModel } from './TileModel';
 import { Direction } from '../enums/Direction';
 
+export class CoreModel {
+  readonly id: number;
+  readonly tile: TileModel;
+  readonly ownerId: number;
+  readonly maxHp: number;
+  hp: number;
+  active: boolean = true;
+
+  constructor(id: number, tile: TileModel, ownerId: number, maxHp: number = 10) {
+    this.id = id;
+    this.tile = tile;
+    this.ownerId = ownerId;
+    this.maxHp = maxHp;
+    this.hp = maxHp;
+  }
+
+  damage(): void {
+    if (!this.active) return;
+    this.hp = Math.max(this.hp - 1, 0);
+    if (this.hp === 0) {
+      this.active = false;
+    }
+  }
+}
+
 export class SpawnPointModel {
   readonly id: number;
   readonly tile: TileModel;

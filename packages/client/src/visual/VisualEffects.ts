@@ -149,16 +149,19 @@ export function animDamageFlash(
   });
 }
 
-/** 스폰포인트 파괴 애니메이션: 흔들림 + 페이드 */
+type Movable = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Graphics;
+
+/** 스폰포인트/코어 파괴 애니메이션: 흔들림 + 페이드 */
 export function animSpawnDestroy(
   scene: Phaser.Scene,
   bg: Phaser.GameObjects.Rectangle,
   hpBar: Phaser.GameObjects.Rectangle,
   hpBarBg: Phaser.GameObjects.Rectangle,
   label: Phaser.GameObjects.Text,
-  dirArrow: Phaser.GameObjects.Graphics,
+  dirArrow?: Phaser.GameObjects.Graphics,
 ): void {
-  const parts = [bg, hpBar, hpBarBg, label, dirArrow];
+  const parts: Movable[] = [bg, hpBar, hpBarBg, label];
+  if (dirArrow) parts.push(dirArrow);
   const origPositions = parts.map(p => p.x);
   const shakeSeq = [4, -4, 3, -3, 2, -2, 0];
   let step = 0;
@@ -175,7 +178,7 @@ export function animSpawnDestroy(
           bg.setFillStyle(0x222222, 0.3);
           hpBar.setVisible(false);
           hpBarBg.setVisible(false);
-          dirArrow.setVisible(false);
+          dirArrow?.setVisible(false);
           label.setText('X').setColor('#ff4444');
         },
       });

@@ -9,4 +9,5 @@ export enum TileType {
   FixedReflector = 7,
   TurnLeftReflector = 8,
   TurnRightReflector = 9,
+  Core = 10,
 }

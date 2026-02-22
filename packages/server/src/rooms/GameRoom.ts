@@ -11,6 +11,7 @@ import {
   PlaceWallMsg,
   MatchFoundMsg,
   SpawnPointInfo,
+  CoreInfo,
   SpawnHpMsg,
   SpawnDestroyedMsg,
   ReflectorPlacedMsg,
@@ -24,6 +25,8 @@ import {
   WallDestroyedMsg,
   TimeStopStartedMsg,
   TimeStopEndedMsg,
+  CoreHpMsg,
+  CoreDestroyedMsg,
 } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
@@ -142,12 +145,22 @@ export class GameRoom {
       const msg: TimeStopEndedMsg = {};
       this.broadcast(SocketEvent.TIME_STOP_ENDED, msg);
     };
+
+    this.simulator.onCoreHpChanged = (event) => {
+      const msg: CoreHpMsg = { coreId: event.coreId, hp: event.hp, ownerId: event.ownerId };
+      this.broadcast(SocketEvent.CORE_HP, msg);
+    };
+
+    this.simulator.onCoreDestroyed = (coreId) => {
+      const msg: CoreDestroyedMsg = { coreId };
+      this.broadcast(SocketEvent.CORE_DESTROYED, msg);
+    };
   }
 
   start(): void {
     this.simulator.init();
 
-    // 플레이어에게 매칭 정보 전송 (SpawnPoint 포함)
+    // 플레이어에게 매칭 정보 전송 (SpawnPoint + Core 포함)
     const mapData = createDefaultBattleMapData();
     const spawnPoints: SpawnPointInfo[] = this.simulator.spawnPoints.map(sp => ({
       id: sp.id,
@@ -157,6 +170,14 @@ export class GameRoom {
       hp: sp.hp,
       maxHp: sp.maxHp,
     }));
+    const cores: CoreInfo[] = this.simulator.cores.map(c => ({
+      id: c.id,
+      x: c.tile.x,
+      y: c.tile.y,
+      ownerId: c.ownerId,
+      hp: c.hp,
+      maxHp: c.maxHp,
+    }));
 
     for (let i = 0; i < 2; i++) {
       const msg: MatchFoundMsg = {
@@ -164,6 +185,7 @@ export class GameRoom {
         playerId: i,
         mapData,
         spawnPoints,
+        cores,
         timePerPhase: DEFAULT_BATTLE_CONFIG.timePerPhase,
       };
       this.players[i].emit(SocketEvent.MATCH_FOUND, msg);

@@ -18,6 +18,8 @@ import {
   WallDestroyedMsg,
   TimeStopStartedMsg,
   TimeStopEndedMsg,
+  CoreHpMsg,
+  CoreDestroyedMsg,
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
@@ -43,6 +45,8 @@ export class SocketClient {
   onWallDestroyed?: (msg: WallDestroyedMsg) => void;
   onTimeStopStarted?: (msg: TimeStopStartedMsg) => void;
   onTimeStopEnded?: (msg: TimeStopEndedMsg) => void;
+  onCoreHp?: (msg: CoreHpMsg) => void;
+  onCoreDestroyed?: (msg: CoreDestroyedMsg) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 
@@ -80,6 +84,8 @@ export class SocketClient {
     this.socket.on(SocketEvent.WALL_DESTROYED, (msg: WallDestroyedMsg) => this.onWallDestroyed?.(msg));
     this.socket.on(SocketEvent.TIME_STOP_STARTED, (msg: TimeStopStartedMsg) => this.onTimeStopStarted?.(msg));
     this.socket.on(SocketEvent.TIME_STOP_ENDED, (msg: TimeStopEndedMsg) => this.onTimeStopEnded?.(msg));
+    this.socket.on(SocketEvent.CORE_HP, (msg: CoreHpMsg) => this.onCoreHp?.(msg));
+    this.socket.on(SocketEvent.CORE_DESTROYED, (msg: CoreDestroyedMsg) => this.onCoreDestroyed?.(msg));
   }
 
   connect(): void {

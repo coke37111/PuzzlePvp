@@ -39,11 +39,21 @@ export interface SpawnPointInfo {
   maxHp: number;
 }
 
+export interface CoreInfo {
+  id: number;
+  x: number;
+  y: number;
+  ownerId: number;
+  hp: number;
+  maxHp: number;
+}
+
 export interface MatchFoundMsg {
   roomId: string;
   playerId: number;  // 0 또는 1
   mapData: MapData;
   spawnPoints: SpawnPointInfo[];
+  cores: CoreInfo[];
   timePerPhase: number;  // 공 이동 1칸 소요시간 (초)
 }
 
@@ -125,6 +135,16 @@ export interface TimeStopEndedMsg {
   // 빈 payload
 }
 
+export interface CoreHpMsg {
+  coreId: number;
+  hp: number;
+  ownerId: number;
+}
+
+export interface CoreDestroyedMsg {
+  coreId: number;
+}
+
 // ─── Socket.io 이벤트 이름 상수 ──────────────────────────────────
 
 export const SocketEvent = {
@@ -150,4 +170,6 @@ export const SocketEvent = {
   WALL_DESTROYED: 'wall_destroyed',
   TIME_STOP_STARTED: 'time_stop_started',
   TIME_STOP_ENDED: 'time_stop_ended',
+  CORE_HP: 'core_hp',
+  CORE_DESTROYED: 'core_destroyed',
 } as const;

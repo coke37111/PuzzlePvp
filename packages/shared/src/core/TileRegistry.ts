@@ -6,10 +6,13 @@ import { Direction } from '../enums/Direction';
 // UniqueIndex 상수 (Classic1 호환)
 export const TILE_INDEX = {
   EMPTY: 1,
-  START_RIGHT: 2,   // 오른쪽으로 발사하는 스타트 (P1용)
-  START_LEFT: 3,    // 왼쪽으로 발사하는 스타트 (P2용)
-  GOAL: 4,
+  START_RIGHT: 2,   // 오른쪽으로 발사하는 스타트 (P1용: (2,6))
+  START_LEFT: 3,    // 왼쪽으로 발사하는 스타트 (P2용: (4,0))
+  START_UP: 4,      // 위쪽으로 발사하는 스타트 (P1용: (0,4))
+  START_DOWN: 5,    // 아래쪽으로 발사하는 스타트 (P2용: (6,2))
+  CORE_P1: 6,       // P1 코어 (0,6)
   BLOCK: 7,
+  CORE_P2: 8,       // P2 코어 (6,0)
   FIXED_SLASH: 10,
   FIXED_BACKSLASH: 11,
   PORTAL_A: 20,
@@ -42,12 +45,34 @@ export function createBattleTileRegistry(): Map<number, TileData> {
     isPassable: true,
   }));
 
-  registry.set(TILE_INDEX.GOAL, createTileData({
-    uniqueIndex: TILE_INDEX.GOAL,
-    tileType: TileType.Goal,
+  registry.set(TILE_INDEX.START_UP, createTileData({
+    uniqueIndex: TILE_INDEX.START_UP,
+    tileType: TileType.Start,
+    ballCreateDirections: [Direction.Up],
     isReflectorSetable: false,
     isPassable: true,
-    isGoal: true,
+  }));
+
+  registry.set(TILE_INDEX.START_DOWN, createTileData({
+    uniqueIndex: TILE_INDEX.START_DOWN,
+    tileType: TileType.Start,
+    ballCreateDirections: [Direction.Down],
+    isReflectorSetable: false,
+    isPassable: true,
+  }));
+
+  registry.set(TILE_INDEX.CORE_P1, createTileData({
+    uniqueIndex: TILE_INDEX.CORE_P1,
+    tileType: TileType.Core,
+    isReflectorSetable: false,
+    isPassable: true,
+  }));
+
+  registry.set(TILE_INDEX.CORE_P2, createTileData({
+    uniqueIndex: TILE_INDEX.CORE_P2,
+    tileType: TileType.Core,
+    isReflectorSetable: false,
+    isPassable: true,
   }));
 
   registry.set(TILE_INDEX.BLOCK, createTileData({

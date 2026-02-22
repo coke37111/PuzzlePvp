@@ -1,6 +1,6 @@
 import { MapModel, ReflectorPlacement } from './MapModel';
 import { BallSimulator } from './BallSimulator';
-import { SpawnPointModel } from './SpawnPointModel';
+import { SpawnPointModel, CoreModel } from './SpawnPointModel';
 import { TileModel } from './TileModel';
 import { BallModel } from './BallModel';
 import { Direction } from '../enums/Direction';
@@ -37,7 +37,8 @@ export interface BattleConfig {
   spawnInterval: number;    // 초 단위 (기본 1.0)
   timePerPhase: number;     // 초 단위 (기본 0.3, 클수록 느림)
   maxReflectorsPerPlayer: number;  // 플레이어당 반사판 한도 (기본 5)
-  spawnHp: number;          // SpawnPoint 기본 HP (기본 30)
+  spawnHp: number;          // SpawnPoint 기본 HP
+  coreHp: number;           // Core 기본 HP
   maxWallsPerPlayer: number;       // 플레이어당 성벽 아이템 사용 횟수 (기본 3)
   wallHp: number;           // 성벽 HP (기본 10)
   timeStopUsesPerPlayer: number;   // 시간 정지 사용 횟수 (기본 1)
@@ -48,12 +49,19 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   spawnInterval: 0.2,
   timePerPhase: 0.6,
   maxReflectorsPerPlayer: 5,
-  spawnHp: 30,
+  spawnHp: 10,
+  coreHp: 10,
   maxWallsPerPlayer: 3,
   wallHp: 10,
   timeStopUsesPerPlayer: 1,
   timeStopDuration: 5,
 };
+
+export interface CoreEvent {
+  coreId: number;
+  hp: number;
+  ownerId: number;
+}
 
 export interface SpawnEvent {
   spawnId: number;
@@ -71,9 +79,11 @@ export class BattleSimulator {
   readonly config: BattleConfig;
 
   spawnPoints: SpawnPointModel[] = [];
+  cores: CoreModel[] = [];
   private spawnTimer: number = 0;
   private reflectorQueues: Map<number, number[]> = new Map();  // playerId → [tileIndex, ...]
   private nextSpawnPointId: number = 1;
+  private nextCoreId: number = 1;
   private isRunning: boolean = false;
 
   // 아이템
@@ -96,6 +106,8 @@ export class BattleSimulator {
   onWallDestroyed?: (x: number, y: number) => void;
   onTimeStopStarted?: (event: TimeStopEvent) => void;
   onTimeStopEnded?: () => void;
+  onCoreHpChanged?: (event: CoreEvent) => void;
+  onCoreDestroyed?: (coreId: number) => void;
 
   constructor(map: MapModel, config: Partial<BattleConfig> = {}) {
     this.map = map;
@@ -125,18 +137,30 @@ export class BattleSimulator {
 
   init(): void {
     this.spawnPoints = [];
+    this.cores = [];
     this.nextSpawnPointId = 1;
+    this.nextCoreId = 1;
     this.spawnTimer = 0;
     this.isRunning = true;
 
     // 스타트 타일에서 SpawnPoint 생성
+    // uniqueIndex 2,4 = P1(ownerId=0), 3,5 = P2(ownerId=1)
     const startTiles = this.map.getStartTiles();
     for (const tile of startTiles) {
-      // x=0은 P1(ownerId=0), x=size-1은 P2(ownerId=1)
-      const ownerId = tile.x === 0 ? 0 : 1;
+      const idx = tile.tileData.uniqueIndex;
+      const ownerId = (idx === 2 || idx === 4) ? 0 : 1;
       const dir = tile.startDirection;
       const sp = new SpawnPointModel(this.nextSpawnPointId++, tile, ownerId, dir, this.config.spawnHp);
       this.spawnPoints.push(sp);
+    }
+
+    // 코어 타일에서 CoreModel 생성
+    // uniqueIndex 6 = P1(ownerId=0), 8 = P2(ownerId=1)
+    const coreTiles = this.map.getCoreTiles();
+    for (const tile of coreTiles) {
+      const ownerId = tile.tileData.uniqueIndex === 6 ? 0 : 1;
+      const core = new CoreModel(this.nextCoreId++, tile, ownerId, this.config.coreHp);
+      this.cores.push(core);
     }
 
     // BallSimulator 이벤트 연결
@@ -162,19 +186,34 @@ export class BattleSimulator {
 
       // 스폰포인트 체크
       const sp = this.spawnPoints.find(s => s.tile.x === tile.x && s.tile.y === tile.y);
-      if (!sp || !sp.active) return false;
-
-      // 아군 공은 아군 스폰포인트에 피해 없음
-      if (ball.ownerId === sp.ownerId) return true;
-
-      sp.damage();
-      if (!sp.active) {
-        this.onSpawnDestroyed?.(sp.id);
+      if (sp && sp.active) {
+        // 아군 공은 아군 스폰포인트에 피해 없음
+        if (ball.ownerId !== sp.ownerId) {
+          sp.damage();
+          if (!sp.active) {
+            this.onSpawnDestroyed?.(sp.id);
+          }
+          this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
+        }
+        return true; // 공 캡처
       }
 
-      this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
-      this.checkWinCondition();
-      return true; // 공 캡처
+      // 코어 체크 (승패 결정)
+      const core = this.cores.find(c => c.tile.x === tile.x && c.tile.y === tile.y);
+      if (core && core.active) {
+        // 아군 공은 아군 코어에 피해 없음
+        if (ball.ownerId !== core.ownerId) {
+          core.damage();
+          this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
+          if (!core.active) {
+            this.onCoreDestroyed?.(core.id);
+            this.checkWinCondition();
+          }
+        }
+        return true; // 공 캡처
+      }
+
+      return false;
     };
 
     // BallSimulator 배틀 모드 초기화 (bracket notation 제거)
@@ -223,33 +262,33 @@ export class BattleSimulator {
   }
 
   private checkWinCondition(): void {
-    const p0Alive = this.spawnPoints.filter(s => s.ownerId === 0 && s.active).length > 0;
-    const p1Alive = this.spawnPoints.filter(s => s.ownerId === 1 && s.active).length > 0;
+    const p0CoreAlive = this.cores.some(c => c.ownerId === 0 && c.active);
+    const p1CoreAlive = this.cores.some(c => c.ownerId === 1 && c.active);
 
-    if (!p0Alive && !p1Alive) {
+    if (!p0CoreAlive && !p1CoreAlive) {
       this.isRunning = false;
       this.onGameOver?.({ winnerId: -1 });
-    } else if (!p0Alive) {
+    } else if (!p0CoreAlive) {
       this.isRunning = false;
       this.onGameOver?.({ winnerId: 1 });
-    } else if (!p1Alive) {
+    } else if (!p1CoreAlive) {
       this.isRunning = false;
       this.onGameOver?.({ winnerId: 0 });
     }
   }
 
   /** 반사판 배치 (플레이어 큐 FIFO 관리) */
-  /** (x,y)가 playerId에게 적 스폰포인트 인접 1칸인지 확인 */
-  isEnemySpawnZone(playerId: number, x: number, y: number): boolean {
-    for (const sp of this.spawnPoints) {
-      if (sp.ownerId === playerId) continue; // 아군은 무시
-      if (Math.abs(sp.tile.x - x) <= 1 && Math.abs(sp.tile.y - y) <= 1) return true;
+  /** (x,y)가 playerId에게 적 코어 인접 1칸인지 확인 */
+  isEnemyCoreZone(playerId: number, x: number, y: number): boolean {
+    for (const core of this.cores) {
+      if (core.ownerId === playerId) continue; // 아군 코어는 무시
+      if (Math.abs(core.tile.x - x) <= 1 && Math.abs(core.tile.y - y) <= 1) return true;
     }
     return false;
   }
 
   placeReflector(playerId: number, x: number, y: number, type: ReflectorType): boolean {
-    if (this.isEnemySpawnZone(playerId, x, y)) return false;
+    if (this.isEnemyCoreZone(playerId, x, y)) return false;
 
     const queue = this.reflectorQueues.get(playerId)!;
     const tileIndex = x + y * 100;

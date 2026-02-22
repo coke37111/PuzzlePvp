@@ -3,6 +3,7 @@ import { SocketClient } from '../network/SocketClient';
 import {
   MatchFoundMsg,
   SpawnPointInfo,
+  CoreInfo,
   MapData,
   ReflectorType,
   BallSpawnedMsg,
@@ -17,6 +18,8 @@ import {
   WallDamagedMsg,
   WallDestroyedMsg,
   TimeStopStartedMsg,
+  CoreHpMsg,
+  CoreDestroyedMsg,
   createBattleTileRegistry,
   MapModel,
   EMPTY_TILE_INDEX,
@@ -27,6 +30,7 @@ import {
   PLAYER_COLORS, PLAYER_COLORS_DARK,
   BG_COLOR,
   TILE_EMPTY_COLOR, TILE_P1_SPAWN_COLOR, TILE_P2_SPAWN_COLOR,
+  TILE_P1_CORE_COLOR, TILE_P2_CORE_COLOR,
   TILE_BLOCK_COLOR, TILE_BLOCK_X_COLOR, TILE_BLOCK_X_ALPHA,
   HOVER_COLOR, HOVER_ALPHA,
   GLOW_RADIUS_EXTRA, GLOW_ALPHA,
@@ -79,6 +83,20 @@ interface ReflectorVisual {
   playerId: number;
 }
 
+interface CoreVisual {
+  id: number;
+  bg: Phaser.GameObjects.Rectangle;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBarBg: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
+  x: number;
+  y: number;
+  maxHp: number;
+  currentHp: number;
+  ownerId: number;
+  destroyed: boolean;
+}
+
 interface WallVisual {
   bg: Phaser.GameObjects.Rectangle;
   hpBar: Phaser.GameObjects.Rectangle;
@@ -95,6 +113,7 @@ export class GameScene extends Phaser.Scene {
   private mapData!: MapData;
   private mapModel!: MapModel;
   private serverSpawnPoints: SpawnPointInfo[] = [];
+  private serverCores: CoreInfo[] = [];
   private timePerPhase: number = 0.3;
 
   private gridOffsetX: number = 0;
@@ -102,6 +121,7 @@ export class GameScene extends Phaser.Scene {
 
   private ballVisuals: Map<number, BallVisual> = new Map();
   private spawnVisuals: Map<number, SpawnVisual> = new Map();
+  private coreVisuals: Map<number, CoreVisual> = new Map();
   private reflectorVisuals: Map<string, ReflectorVisual> = new Map();
 
   private tilesLayer!: Phaser.GameObjects.Container;
@@ -146,6 +166,7 @@ export class GameScene extends Phaser.Scene {
     this.myPlayerId = data.matchData.playerId;
     this.mapData = data.matchData.mapData;
     this.serverSpawnPoints = data.matchData.spawnPoints || [];
+    this.serverCores = data.matchData.cores || [];
     this.timePerPhase = data.matchData.timePerPhase || 0.3;
 
     const registry = createBattleTileRegistry();
@@ -172,6 +193,7 @@ export class GameScene extends Phaser.Scene {
     // 상태 초기화
     this.ballVisuals.clear();
     this.spawnVisuals.clear();
+    this.coreVisuals.clear();
     this.reflectorVisuals.clear();
     this.wallVisuals.clear();
     this.hpTweens.clear();
@@ -230,11 +252,19 @@ export class GameScene extends Phaser.Scene {
         );
         this.tilesLayer.add(rect);
 
-        // 스폰포인트
-        if (tileIdx === 2 || tileIdx === 3) {
+        // 스폰포인트 (타일 인덱스 2,3,4,5)
+        if (tileIdx === 2 || tileIdx === 3 || tileIdx === 4 || tileIdx === 5) {
           const spInfo = this.serverSpawnPoints.find(sp => sp.x === x && sp.y === y);
           if (spInfo) {
             this.createSpawnVisual(x, y, spInfo.ownerId, spInfo.id, spInfo.maxHp, tileIdx);
+          }
+        }
+
+        // 코어 타일 (타일 인덱스 6, 8)
+        if (tileIdx === 6 || tileIdx === 8) {
+          const coreInfo = this.serverCores.find(c => c.x === x && c.y === y);
+          if (coreInfo) {
+            this.createCoreVisual(x, y, coreInfo.ownerId, coreInfo.id, coreInfo.maxHp);
           }
         }
 
@@ -258,34 +288,32 @@ export class GameScene extends Phaser.Scene {
     const size = this.mapData.size;
     const drawnKeys = new Set<string>();
 
-    // 모든 스폰포인트 주변을 표시 (적=설치불가, 아군=적 설치불가)
-    for (const sp of this.serverSpawnPoints) {
-      const isEnemy = sp.ownerId !== this.myPlayerId;
-      const color = this.getTeamColor(sp.ownerId);
+    // 코어 주변만 보호 구역 (적 코어 = 설치 불가)
+    for (const core of this.serverCores) {
+      const isEnemy = core.ownerId !== this.myPlayerId;
+      if (!isEnemy) continue; // 아군 코어 주변은 오버레이 없음
+
+      const color = this.getTeamColor(core.ownerId);
 
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
-          const nx = sp.x + dx;
-          const ny = sp.y + dy;
+          const nx = core.x + dx;
+          const ny = core.y + dy;
           if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
 
           const tileIdx = this.mapData.tiles[ny][nx];
           if (tileIdx < EMPTY_TILE_INDEX) continue;
-          if (tileIdx === 2 || tileIdx === 3 || tileIdx === 7) continue;
+          // 스폰/코어/블록 타일은 건너뜀
+          if (tileIdx !== 1) continue;
 
           const key = `${nx},${ny}`;
-
-          if (isEnemy) {
-            // 적 스폰 주변: 설치 불가 추적 + 오버레이
-            this.enemyZoneTiles.add(key);
-            if (drawnKeys.has(key)) continue;
-            drawnKeys.add(key);
-            const px = nx * TILE_SIZE + TILE_SIZE / 2;
-            const py = ny * TILE_SIZE + TILE_SIZE / 2;
-            const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
-            this.tilesLayer.add(overlay);
-          }
-          // 아군 스폰 주변: 오버레이 없음 (설치 가능, 적만 서버에서 차단)
+          this.enemyZoneTiles.add(key);
+          if (drawnKeys.has(key)) continue;
+          drawnKeys.add(key);
+          const px = nx * TILE_SIZE + TILE_SIZE / 2;
+          const py = ny * TILE_SIZE + TILE_SIZE / 2;
+          const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
+          this.tilesLayer.add(overlay);
         }
       }
     }
@@ -293,8 +321,10 @@ export class GameScene extends Phaser.Scene {
 
   private getTileColor(tileIdx: number): number {
     switch (tileIdx) {
-      case 2: return TILE_P1_SPAWN_COLOR;
-      case 3: return TILE_P2_SPAWN_COLOR;
+      case 2: case 4: return TILE_P1_SPAWN_COLOR;
+      case 3: case 5: return TILE_P2_SPAWN_COLOR;
+      case 6: return TILE_P1_CORE_COLOR;
+      case 8: return TILE_P2_CORE_COLOR;
       case 7: return TILE_BLOCK_COLOR;
       default: return TILE_EMPTY_COLOR;
     }
@@ -340,18 +370,27 @@ export class GameScene extends Phaser.Scene {
     const arrowColor = this.getTeamColor(ownerId);
     dirArrow.fillStyle(arrowColor, 0.6);
 
-    // tileIdx=2: 오른쪽 발사, tileIdx=3: 왼쪽 발사
     const arrowSize = 6;
     if (tileIdx === 2) {
       // 오른쪽 화살표
       const ax = px + TILE_SIZE / 2 - 4;
       const ay = py;
       dirArrow.fillTriangle(ax, ay - arrowSize, ax, ay + arrowSize, ax + arrowSize, ay);
-    } else {
+    } else if (tileIdx === 3) {
       // 왼쪽 화살표
       const ax = px - TILE_SIZE / 2 + 4;
       const ay = py;
       dirArrow.fillTriangle(ax, ay - arrowSize, ax, ay + arrowSize, ax - arrowSize, ay);
+    } else if (tileIdx === 4) {
+      // 위쪽 화살표
+      const ax = px;
+      const ay = py - TILE_SIZE / 2 + 4;
+      dirArrow.fillTriangle(ax - arrowSize, ay, ax + arrowSize, ay, ax, ay - arrowSize);
+    } else {
+      // 아래쪽 화살표 (tileIdx === 5)
+      const ax = px;
+      const ay = py + TILE_SIZE / 2 - 4;
+      dirArrow.fillTriangle(ax - arrowSize, ay, ax + arrowSize, ay, ax, ay + arrowSize);
     }
     this.tilesLayer.add(dirArrow);
 
@@ -364,6 +403,84 @@ export class GameScene extends Phaser.Scene {
       ownerId,
       destroyed: false,
     });
+  }
+
+  private createCoreVisual(
+    gridX: number, gridY: number,
+    ownerId: number, coreId: number, maxHp: number,
+  ): void {
+    const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+    const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+
+    // 배경 (진한 팀 색상)
+    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, this.getTeamColorDark(ownerId), 0.7);
+    this.tilesLayer.add(bg);
+
+    // HP 바 배경
+    const hpBarBg = this.add.rectangle(
+      px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
+      TILE_SIZE - 4, HP_BAR_HEIGHT, 0x333333,
+    );
+    this.tilesLayer.add(hpBarBg);
+
+    // HP 바
+    const hpBar = this.add.rectangle(
+      px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
+      TILE_SIZE - 4, HP_BAR_HEIGHT, getHpColor(1.0),
+    );
+    this.tilesLayer.add(hpBar);
+
+    // 코어 다이아몬드 마크
+    const diamond = this.add.graphics();
+    diamond.lineStyle(2, this.getTeamColor(ownerId), 0.9);
+    const s = TILE_SIZE / 5;
+    diamond.strokePoints([
+      { x: px, y: py - s },
+      { x: px + s, y: py },
+      { x: px, y: py + s },
+      { x: px - s, y: py },
+    ], true);
+    this.tilesLayer.add(diamond);
+
+    // HP 텍스트
+    const label = this.add.text(px, py + 8, String(maxHp), {
+      fontSize: '12px',
+      color: '#ffff88',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.tilesLayer.add(label);
+
+    this.coreVisuals.set(coreId, {
+      id: coreId,
+      bg, hpBar, hpBarBg, label,
+      x: gridX, y: gridY,
+      maxHp, currentHp: maxHp,
+      ownerId,
+      destroyed: false,
+    });
+  }
+
+  private updateCoreHp(coreId: number, hp: number, _ownerId: number): void {
+    const visual = this.coreVisuals.get(coreId);
+    if (!visual || visual.destroyed) return;
+
+    const oldHp = visual.currentHp;
+    visual.currentHp = hp;
+    visual.label.setText(String(hp));
+
+    const ratio = hp / visual.maxHp;
+    const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+
+    visual.hpBar.setFillStyle(getHpColor(ratio));
+    animHpBar(this, visual.hpBar, baseX, ratio, `core_hp_${coreId}`, this.hpTweens);
+
+    if (hp < oldHp) {
+      animDamageFlash(this, visual.bg, this.getTeamColorDark(visual.ownerId), 0.7);
+      const damage = oldHp - hp;
+      const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+      const popupY = visual.y * TILE_SIZE;
+      animDamagePopup(this, this.tilesLayer, popupX, popupY, damage);
+    }
   }
 
   private updateSpawnHp(spawnId: number, hp: number, _ownerId: number): void {
@@ -750,6 +867,18 @@ export class GameScene extends Phaser.Scene {
       visual.destroyed = true;
 
       animSpawnDestroy(this, visual.bg, visual.hpBar, visual.hpBarBg, visual.label, visual.dirArrow);
+    };
+
+    this.socket.onCoreHp = (msg: CoreHpMsg) => {
+      this.updateCoreHp(msg.coreId, msg.hp, msg.ownerId);
+    };
+
+    this.socket.onCoreDestroyed = (msg: CoreDestroyedMsg) => {
+      const visual = this.coreVisuals.get(msg.coreId);
+      if (!visual || visual.destroyed) return;
+      visual.destroyed = true;
+
+      animSpawnDestroy(this, visual.bg, visual.hpBar, visual.hpBarBg, visual.label);
     };
 
     this.socket.onReflectorPlaced = (msg: ReflectorPlacedMsg) => {

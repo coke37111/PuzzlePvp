@@ -118,6 +118,10 @@ export class MapModel {
   getGoalTiles(): TileModel[] {
     return Array.from(this.tiles.values()).filter(t => t.isGoal);
   }
+
+  getCoreTiles(): TileModel[] {
+    return Array.from(this.tiles.values()).filter(t => t.isCore);
+  }
 }
 
 // 배틀용 기본 맵 생성 (7x7)
@@ -130,30 +134,28 @@ export function createBattleMap(tileRegistry: Map<number, TileData>): MapModel {
 export function createDefaultBattleMapData(): MapData {
   const SIZE = 7;
   // TileRegistry의 TILE_INDEX와 일치:
-  // 1 = Empty, 2 = Start(오른쪽발사=P1), 3 = Start(왼쪽발사=P2), 7 = Block
-  // P1 스폰: x=0 열, → 오른쪽으로 발사 (uniqueIndex=2)
-  // P2 스폰: x=6 열, → 왼쪽으로 발사 (uniqueIndex=3)
-  const E = 1; // Empty (반사판 설치 가능)
-  const L = 2; // Start Left-side (P1, 오른쪽으로 발사)
-  const R = 3; // Start Right-side (P2, 왼쪽으로 발사)
-  const B = 7; // Block
-  const _ = 0; // 없음 (타일 없음)
+  // 1=Empty, 2=StartRight(P1), 3=StartLeft(P2), 4=StartUp(P1), 5=StartDown(P2)
+  // 6=CoreP1, 7=Block, 8=CoreP2
+  // P1 스폰: (0,4) 위쪽 발사, (2,6) 오른쪽 발사
+  // P2 스폰: (4,0) 왼쪽 발사, (6,2) 아래쪽 발사
+  // P1 코어: (0,6), P2 코어: (6,0)
+  const E  = 1; // Empty (반사판 설치 가능)
+  const SR = 2; // Start Right (P1, 오른쪽 발사) - (2,6)
+  const SL = 3; // Start Left  (P2, 왼쪽 발사)  - (4,0)
+  const SU = 4; // Start Up    (P1, 위쪽 발사)   - (0,4)
+  const SD = 5; // Start Down  (P2, 아래쪽 발사) - (6,2)
+  const C1 = 6; // Core P1                       - (0,6)
+  const C2 = 8; // Core P2                       - (6,0)
 
   const tiles: number[][] = [
-    // y=0
-    [_, E, E, E, E, E, _],
-    // y=1  P1스폰              P2스폰
-    [L, E, E, E, E, E, R],
-    // y=2
-    [E, E, E, B, E, E, E],
-    // y=3 (중앙)
-    [E, E, E, E, E, E, E],
-    // y=4
-    [E, E, E, B, E, E, E],
-    // y=5  P1스폰              P2스폰
-    [L, E, E, E, E, E, R],
-    // y=6
-    [_, E, E, E, E, E, _],
+    // y=0  x=0   x=1   x=2   x=3   x=4   x=5   x=6
+    /*y=0*/ [E,    E,    E,    E,    SL,   E,    C2 ],
+    /*y=1*/ [E,    E,    E,    E,    E,    E,    E  ],
+    /*y=2*/ [E,    E,    E,    E,    E,    E,    SD ],
+    /*y=3*/ [E,    E,    E,    E,    E,    E,    E  ],
+    /*y=4*/ [SU,   E,    E,    E,    E,    E,    E  ],
+    /*y=5*/ [E,    E,    E,    E,    E,    E,    E  ],
+    /*y=6*/ [C1,   E,    SR,   E,    E,    E,    E  ],
   ];
 
   return { size: SIZE, tiles };

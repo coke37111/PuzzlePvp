@@ -9,7 +9,7 @@ export { ItemType } from './enums/ItemType';
 export type { TileData } from './core/TileData';
 export type { MapData, ReflectorPlacement } from './core/MapModel';
 export type { SimulationSummary, BallArrivedAtTileCallback } from './core/BallSimulator';
-export type { BattleConfig, SpawnEvent, BattleResult, WallState, ItemCounts, WallEvent, TimeStopEvent } from './core/BattleSimulator';
+export type { BattleConfig, SpawnEvent, BattleResult, WallState, ItemCounts, WallEvent, TimeStopEvent, CoreEvent } from './core/BattleSimulator';
 
 // Core - values
 export { createTileData, EMPTY_TILE_INDEX } from './core/TileData';
@@ -19,7 +19,7 @@ export { MapModel, createBattleMap, createDefaultBattleMapData } from './core/Ma
 export { BallSimulatorHistory } from './core/BallSimulatorHistory';
 export { BallSimulationInstance } from './core/BallSimulationInstance';
 export { BallSimulator } from './core/BallSimulator';
-export { SpawnPointModel } from './core/SpawnPointModel';
+export { SpawnPointModel, CoreModel } from './core/SpawnPointModel';
 export { BattleSimulator, DEFAULT_BATTLE_CONFIG } from './core/BattleSimulator';
 export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
 
@@ -27,11 +27,12 @@ export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
 export type {
   JoinQueueMsg, PlaceReflectorMsg, RemoveReflectorMsg,
   PlaceWallMsg, UseTimeStopMsg,
-  SpawnPointInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg,
+  SpawnPointInfo, CoreInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg,
   ReflectorPlacedMsg, ReflectorRemovedMsg,
   BallSpawnedMsg, BallMovedMsg, BallEndedMsg, GameOverMsg,
   WallPlacedMsg, WallDamagedMsg, WallDestroyedMsg,
   TimeStopStartedMsg, TimeStopEndedMsg,
+  CoreHpMsg, CoreDestroyedMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

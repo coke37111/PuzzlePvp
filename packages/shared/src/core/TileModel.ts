@@ -42,6 +42,10 @@ export class TileModel {
       this.tileData.tileType === TileType.TurnRightReflector;
   }
 
+  get isCore(): boolean {
+    return this.tileData.tileType === TileType.Core;
+  }
+
   get isBlock(): boolean {
     return !this.tileData.isPassable;
   }
