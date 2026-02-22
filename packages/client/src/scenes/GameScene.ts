@@ -247,10 +247,6 @@ export class GameScene extends Phaser.Scene {
     this.spawnGaugeFiring = true;
     this.time.delayedCall(100, () => { this.spawnGaugeFiring = false; });
 
-    this.add.text(width / 2, 8, `Player ${this.myPlayerId + 1} (Blue)`, {
-      fontSize: '14px',
-      color: '#4488ff',
-    }).setOrigin(0.5, 0);
   }
 
   // --- 씬 종료 시 정리 ---

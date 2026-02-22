@@ -81,6 +81,10 @@ export class BattleSimulator {
   spawnPoints: SpawnPointModel[] = [];
   cores: CoreModel[] = [];
   private spawnTimer: number = 0;
+  private phaseNumber: number = 0;
+  private pendingSpawnQueue: Array<{ tile: TileModel; direction: Direction; ownerId: number }> = [];
+  private pendingSpawnTimer: number = 0;
+  private static readonly SPAWN_FIRE_INTERVAL = 0.2;
   private reflectorQueues: Map<number, number[]> = new Map();  // playerId → [tileIndex, ...]
   private nextSpawnPointId: number = 1;
   private nextCoreId: number = 1;
@@ -146,6 +150,9 @@ export class BattleSimulator {
     this.nextSpawnPointId = 1;
     this.nextCoreId = 1;
     this.spawnTimer = 0;
+    this.phaseNumber = 0;
+    this.pendingSpawnQueue = [];
+    this.pendingSpawnTimer = 0;
     this.isRunning = true;
 
     // 스타트 타일에서 SpawnPoint 생성
@@ -246,6 +253,16 @@ export class BattleSimulator {
       }
     }
 
+    // 지연 발사 큐 처리
+    if (this.pendingSpawnQueue.length > 0) {
+      this.pendingSpawnTimer += delta;
+      while (this.pendingSpawnTimer >= BattleSimulator.SPAWN_FIRE_INTERVAL && this.pendingSpawnQueue.length > 0) {
+        this.pendingSpawnTimer -= BattleSimulator.SPAWN_FIRE_INTERVAL;
+        const next = this.pendingSpawnQueue.shift()!;
+        this.simulator.spawnBall(next.tile, next.direction, next.ownerId);
+      }
+    }
+
     // 스폰 타이머
     this.spawnTimer += delta;
     if (this.spawnTimer >= this.config.spawnInterval) {
@@ -270,9 +287,22 @@ export class BattleSimulator {
   }
 
   private spawnAll(): void {
+    this.phaseNumber++;
+    const ballCount = Math.floor(this.phaseNumber / 10) + 1;
+
+    // 첫 번째 공은 즉시 발사, 나머지는 0.2초 간격 큐에 추가
+    let firstFired = false;
     for (const sp of this.spawnPoints) {
       if (!sp.active) continue;
-      this.simulator.spawnBall(sp.tile, sp.spawnDirection, sp.ownerId);
+      for (let i = 0; i < ballCount; i++) {
+        if (!firstFired) {
+          this.simulator.spawnBall(sp.tile, sp.spawnDirection, sp.ownerId);
+          this.pendingSpawnTimer = 0;
+          firstFired = true;
+        } else {
+          this.pendingSpawnQueue.push({ tile: sp.tile, direction: sp.spawnDirection, ownerId: sp.ownerId });
+        }
+      }
     }
   }
 
