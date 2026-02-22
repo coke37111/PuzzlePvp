@@ -58,4 +58,10 @@ export class SpawnPointModel {
       this.active = false;
     }
   }
+
+  /** 리스폰: HP 초기화, active 복구 */
+  respawn(hp: number): void {
+    this.hp = hp;
+    this.active = true;
+  }
 }

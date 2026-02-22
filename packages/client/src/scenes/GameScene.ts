@@ -11,6 +11,7 @@ import {
   BallEndedMsg,
   SpawnHpMsg,
   SpawnDestroyedMsg,
+  SpawnRespawnedMsg,
   ReflectorPlacedMsg,
   ReflectorRemovedMsg,
   GameOverMsg,
@@ -27,7 +28,7 @@ import {
 
 import {
   TILE_SIZE, BALL_RADIUS, HP_BAR_HEIGHT,
-  PLAYER_COLORS, PLAYER_COLORS_DARK,
+  PLAYER_COLORS, PLAYER_COLORS_DARK, BALL_COLOR,
   BG_COLOR,
   TILE_EMPTY_COLOR, TILE_P1_SPAWN_COLOR, TILE_P2_SPAWN_COLOR,
   TILE_P1_CORE_COLOR, TILE_P2_CORE_COLOR,
@@ -39,6 +40,7 @@ import {
   INITIAL_WALL_COUNT, INITIAL_TIME_STOP_COUNT,
   WALL_COLOR, WALL_BORDER_COLOR,
   TIME_STOP_OVERLAY_ALPHA, TIME_STOP_GAUGE_COLOR, TIME_STOP_DURATION,
+  SPAWN_GAUGE_HEIGHT, SPAWN_GAUGE_COLOR,
 } from '../visual/Constants';
 import { drawGridLines } from '../visual/GridRenderer';
 import {
@@ -48,6 +50,7 @@ import {
   animHpBar,
   animDamageFlash,
   animSpawnDestroy,
+  animSpawnRespawn,
   getHpColor,
   animDamagePopup,
 } from '../visual/VisualEffects';
@@ -143,6 +146,12 @@ export class GameScene extends Phaser.Scene {
   private wallCursor: Phaser.GameObjects.Rectangle | null = null;
   private wallVisuals: Map<string, WallVisual> = new Map();
 
+  // 아이템 슬롯 버튼 (터치 가능)
+  private itemSlotWallBg: Phaser.GameObjects.Rectangle | null = null;
+  private itemSlotWallText: Phaser.GameObjects.Text | null = null;
+  private itemSlotTsBg: Phaser.GameObjects.Rectangle | null = null;
+  private itemSlotTsText: Phaser.GameObjects.Text | null = null;
+
   // 시간 정지 오버레이
   private timeStopOverlay: Phaser.GameObjects.Rectangle | null = null;
   private timeStopLabel: Phaser.GameObjects.Text | null = null;
@@ -150,6 +159,14 @@ export class GameScene extends Phaser.Scene {
   private timeStopGauge: Phaser.GameObjects.Rectangle | null = null;
   private timeStopRemaining: number = 0;
   private timeStopTotal: number = TIME_STOP_DURATION;
+
+  // 스폰 타이밍 게이지
+  private spawnInterval: number = 5.0;
+  private spawnGaugeBg: Phaser.GameObjects.Rectangle | null = null;
+  private spawnGaugeFill: Phaser.GameObjects.Rectangle | null = null;
+  private spawnGaugeFiring: boolean = false;
+  private phaseCount: number = 0;
+  private phaseText: Phaser.GameObjects.Text | null = null;
 
   // 애니메이션 보조
   private hpTweens: Map<string, Phaser.Tweens.Tween> = new Map();
@@ -168,6 +185,7 @@ export class GameScene extends Phaser.Scene {
     this.serverSpawnPoints = data.matchData.spawnPoints || [];
     this.serverCores = data.matchData.cores || [];
     this.timePerPhase = data.matchData.timePerPhase || 0.3;
+    this.spawnInterval = data.matchData.spawnInterval || 5.0;
 
     const registry = createBattleTileRegistry();
     this.mapModel = new MapModel(registry);
@@ -208,14 +226,26 @@ export class GameScene extends Phaser.Scene {
     this.timeStopGaugeBg = null;
     this.timeStopGauge = null;
     this.timeStopRemaining = 0;
+    this.spawnGaugeBg = null;
+    this.spawnGaugeFill = null;
+    this.spawnGaugeFiring = false;
+    this.phaseCount = 0;
+    this.phaseText = null;
     this.itemCounts = { wall: [INITIAL_WALL_COUNT, INITIAL_WALL_COUNT], timeStop: [INITIAL_TIME_STOP_COUNT, INITIAL_TIME_STOP_COUNT] };
     this.itemUiTexts = { wall: [null, null], timeStop: [null, null] };
     this.reflectorCountTexts = [null, null];
+    this.itemSlotWallBg = null;
+    this.itemSlotWallText = null;
+    this.itemSlotTsBg = null;
+    this.itemSlotTsText = null;
 
     this.drawGrid();
     this.setupInput();
     this.setupUI();
     this.setupSocketEvents();
+    this.startSpawnGauge();
+    this.spawnGaugeFiring = true;
+    this.time.delayedCall(100, () => { this.spawnGaugeFiring = false; });
 
     this.add.text(width / 2, 8, `Player ${this.myPlayerId + 1} (Blue)`, {
       fontSize: '14px',
@@ -227,6 +257,23 @@ export class GameScene extends Phaser.Scene {
   shutdown(): void {
     this.tweens.killAll();
     this.time.removeAllEvents();
+    // 다음 게임에서 stale 콜백 방지
+    this.socket.onBallSpawned = undefined;
+    this.socket.onBallMoved = undefined;
+    this.socket.onBallEnded = undefined;
+    this.socket.onSpawnHp = undefined;
+    this.socket.onSpawnDestroyed = undefined;
+    this.socket.onSpawnRespawned = undefined;
+    this.socket.onReflectorPlaced = undefined;
+    this.socket.onReflectorRemoved = undefined;
+    this.socket.onGameOver = undefined;
+    this.socket.onWallPlaced = undefined;
+    this.socket.onWallDamaged = undefined;
+    this.socket.onWallDestroyed = undefined;
+    this.socket.onTimeStopStarted = undefined;
+    this.socket.onTimeStopEnded = undefined;
+    this.socket.onCoreHp = undefined;
+    this.socket.onCoreDestroyed = undefined;
   }
 
   // === 그리드 그리기 ===
@@ -636,6 +683,9 @@ export class GameScene extends Phaser.Scene {
     if (!active && this.wallCursor) {
       this.wallCursor.setVisible(false);
     }
+    // 슬롯 버튼 하이라이트
+    this.itemSlotWallBg?.setFillStyle(active ? 0x664400 : 0x332211);
+    this.itemSlotWallBg?.setStrokeStyle(2, active ? 0xffcc44 : 0x886633);
   }
 
   private useTimeStop(): void {
@@ -659,17 +709,43 @@ export class GameScene extends Phaser.Scene {
       { fontSize: '13px', color: '#4488ff', fontStyle: 'bold' },
     ).setOrigin(0, 0);
 
-    this.itemUiTexts.wall[this.myPlayerId as 0|1] = this.add.text(
-      8, 26,
-      `🧱[1] ${INITIAL_WALL_COUNT}`,
-      { fontSize: '12px', color: '#ddaa44', fontStyle: 'bold' },
-    ).setOrigin(0, 0);
+    // 내 아이템 슬롯 버튼 (좌하단, 터치 가능)
+    const SLOT = 56;
+    const wallCX = 8 + SLOT / 2;
+    const tsCX = wallCX + SLOT + 8;
+    const slotCY = height - 8 - SLOT / 2;
 
-    this.itemUiTexts.timeStop[this.myPlayerId as 0|1] = this.add.text(
-      8, 42,
-      `⏸[2] ${INITIAL_TIME_STOP_COUNT}`,
-      { fontSize: '12px', color: '#aa88ff', fontStyle: 'bold' },
-    ).setOrigin(0, 0);
+    this.itemSlotWallBg = this.add.rectangle(wallCX, slotCY, SLOT, SLOT, 0x332211)
+      .setStrokeStyle(2, 0x886633)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(10);
+    this.add.text(wallCX, slotCY - 7, '🧱', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    this.add.text(wallCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '1', {
+      fontSize: '11px', color: '#ffcc44', fontStyle: 'bold',
+    }).setOrigin(0, 0).setDepth(12);
+    this.itemSlotWallText = this.add.text(wallCX, slotCY + 18, `x${INITIAL_WALL_COUNT}`, {
+      fontSize: '13px', color: '#ddaa44', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(11);
+    this.itemSlotWallBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      this.toggleWallMode();
+    });
+
+    this.itemSlotTsBg = this.add.rectangle(tsCX, slotCY, SLOT, SLOT, 0x220033)
+      .setStrokeStyle(2, 0x8844ff)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(10);
+    this.add.text(tsCX, slotCY - 7, '⏸', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    this.add.text(tsCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '2', {
+      fontSize: '11px', color: '#aa88ff', fontStyle: 'bold',
+    }).setOrigin(0, 0).setDepth(12);
+    this.itemSlotTsText = this.add.text(tsCX, slotCY + 18, `x${INITIAL_TIME_STOP_COUNT}`, {
+      fontSize: '13px', color: '#aa88ff', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(11);
+    this.itemSlotTsBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      this.useTimeStop();
+    });
 
     // 우상단: 상대 팀 (항상 빨간색)
     this.reflectorCountTexts[opponentId] = this.add.text(
@@ -723,6 +799,65 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-ESC', () => {
       if (this.wallMode) this.setWallMode(false);
     });
+
+    // 페이즈 카운터 (게이지 아래, 보드 위)
+    const phaseY = SPAWN_GAUGE_HEIGHT + (this.gridOffsetY - SPAWN_GAUGE_HEIGHT) / 2;
+    this.phaseText = this.add.text(width / 2, phaseY, '1', {
+      fontSize: '20px',
+      color: '#44ccff',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(5).setAlpha(0.55);
+
+    // 스폰 타이밍 게이지 (상단)
+    this.spawnGaugeBg = this.add.rectangle(0, 0, width, SPAWN_GAUGE_HEIGHT, 0x111133)
+      .setOrigin(0, 0).setDepth(5);
+    this.spawnGaugeFill = this.add.rectangle(0, 0, width, SPAWN_GAUGE_HEIGHT, SPAWN_GAUGE_COLOR)
+      .setOrigin(0, 0).setDepth(6);
+    this.spawnGaugeFill.scaleX = 0;
+  }
+
+  private startSpawnGauge(): void {
+    if (!this.spawnGaugeFill) return;
+    this.phaseCount++;
+    if (this.phaseText) {
+      this.phaseText.setText(`${this.phaseCount}`);
+      this.tweens.add({
+        targets: this.phaseText,
+        scaleX: 1.5, scaleY: 1.5,
+        duration: 80,
+        ease: 'Sine.easeOut',
+        yoyo: true,
+      });
+    }
+    this.spawnGaugeFill.scaleX = 0;
+    this.spawnGaugeFill.setFillStyle(SPAWN_GAUGE_COLOR);
+    this.tweens.add({
+      targets: this.spawnGaugeFill,
+      scaleX: 1,
+      duration: (this.spawnInterval - 0.07) * 1000,
+      ease: 'Linear',
+      onComplete: () => {
+        this.spawnGaugeFill?.setFillStyle(0xffffff);
+      },
+    });
+  }
+
+  private shakeBoard(): void {
+    const origX = this.gridOffsetX;
+    const origY = this.gridOffsetY;
+    const layers = [this.tilesLayer, this.ballsLayer];
+    const steps = [4, -4, 3, -2, 1, 0];
+    let i = 0;
+    const next = () => {
+      if (i >= steps.length) {
+        layers.forEach(l => l.setPosition(origX, origY));
+        return;
+      }
+      layers.forEach(l => l.setPosition(origX + steps[i], origY));
+      i++;
+      this.time.delayedCall(15, next);
+    };
+    next();
   }
 
   private updateReflectorCount(): void {
@@ -737,6 +872,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateItemUI(): void {
+    // 상대 아이템 텍스트 업데이트 (상단 표시)
     for (let pid = 0; pid < 2; pid++) {
       const wallText = this.itemUiTexts.wall[pid as 0|1];
       const tsText = this.itemUiTexts.timeStop[pid as 0|1];
@@ -744,13 +880,21 @@ export class GameScene extends Phaser.Scene {
       const tsCount = this.itemCounts.timeStop[pid as 0|1];
 
       if (pid === 0) {
-        wallText?.setText(`🧱[1] ${wallCount}`).setAlpha(wallCount > 0 ? 1 : 0.4);
-        tsText?.setText(`⏸[2] ${tsCount}`).setAlpha(tsCount > 0 ? 1 : 0.4);
+        wallText?.setText(`🧱 ${wallCount}`).setAlpha(wallCount > 0 ? 1 : 0.4);
+        tsText?.setText(`⏸ ${tsCount}`).setAlpha(tsCount > 0 ? 1 : 0.4);
       } else {
-        wallText?.setText(`${wallCount} [1]🧱`).setAlpha(wallCount > 0 ? 1 : 0.4);
-        tsText?.setText(`${tsCount} [2]⏸`).setAlpha(tsCount > 0 ? 1 : 0.4);
+        wallText?.setText(`${wallCount} 🧱`).setAlpha(wallCount > 0 ? 1 : 0.4);
+        tsText?.setText(`${tsCount} ⏸`).setAlpha(tsCount > 0 ? 1 : 0.4);
       }
     }
+
+    // 내 슬롯 버튼 카운트 업데이트
+    const myWall = this.itemCounts.wall[this.myPlayerId as 0|1];
+    const myTs = this.itemCounts.timeStop[this.myPlayerId as 0|1];
+    this.itemSlotWallText?.setText(`x${myWall}`);
+    if (!this.wallMode) this.itemSlotWallBg?.setAlpha(myWall > 0 ? 1 : 0.4);
+    this.itemSlotTsText?.setText(`x${myTs}`);
+    this.itemSlotTsBg?.setAlpha(myTs > 0 ? 1 : 0.4);
   }
 
   private showToast(message: string): void {
@@ -789,15 +933,27 @@ export class GameScene extends Phaser.Scene {
       // 종료 애니메이션 중인 같은 ID 방어
       if (this.endingBalls.has(msg.ballId)) return;
 
+      // 스폰 타이밍 게이지: 같은 배치의 첫 번째 공 이벤트에서만 리셋
+      if (!this.spawnGaugeFiring && this.spawnGaugeFill) {
+        this.spawnGaugeFiring = true;
+        this.tweens.killTweensOf(this.spawnGaugeFill);
+        this.startSpawnGauge();
+        this.shakeBoard();
+        // 같은 배치의 다른 BALL_SPAWNED 이벤트 무시 (100ms 디바운스)
+        this.time.delayedCall(100, () => {
+          this.spawnGaugeFiring = false;
+        });
+      }
+
       const px = msg.x * TILE_SIZE + TILE_SIZE / 2;
       const py = msg.y * TILE_SIZE + TILE_SIZE / 2;
 
-      // 공 (팀 색상)
-      const circle = this.add.circle(px, py, BALL_RADIUS, this.getTeamColor(msg.ownerId));
+      // 공 (흰색, 반투명)
+      const circle = this.add.circle(px, py, BALL_RADIUS, BALL_COLOR, 0.6);
       this.ballsLayer.add(circle);
 
       // 광택 하이라이트
-      const shine = this.add.circle(px, py, 4, 0xffffff, 0.8);
+      const shine = this.add.circle(px, py, 4, 0xffffff, 0.4);
       this.ballsLayer.add(shine);
 
       const visual: BallVisual = {
@@ -840,14 +996,13 @@ export class GameScene extends Phaser.Scene {
       this.tweens.killTweensOf(visual.circle);
       this.tweens.killTweensOf(visual.shine);
 
-      const color = this.getTeamColor(visual.ownerId);
       animBallEnd(
         this,
         this.ballsLayer,
         [visual.circle, visual.shine],
         visual.circle.x,
         visual.circle.y,
-        color,
+        BALL_COLOR,
         () => {
           visual.circle.destroy();
           visual.shine.destroy();
@@ -867,6 +1022,29 @@ export class GameScene extends Phaser.Scene {
       visual.destroyed = true;
 
       animSpawnDestroy(this, visual.bg, visual.hpBar, visual.hpBarBg, visual.label, visual.dirArrow);
+    };
+
+    this.socket.onSpawnRespawned = (msg: SpawnRespawnedMsg) => {
+      const visual = this.spawnVisuals.get(msg.spawnId);
+      if (!visual || !visual.destroyed) return;
+
+      visual.destroyed = false;
+      visual.currentHp = msg.hp;
+
+      // 비주얼 복구
+      visual.bg.setFillStyle(this.getTeamColorDark(visual.ownerId), 0.4);
+      visual.bg.setAlpha(1);
+      visual.hpBar.setVisible(true);
+      visual.hpBarBg.setVisible(true);
+      visual.dirArrow.setVisible(true);
+      visual.label.setText(String(msg.hp)).setColor('#ffffff');
+
+      // HP 바 풀로 복구
+      const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+      animHpBar(this, visual.hpBar, baseX, 1.0, `spawn_hp_${msg.spawnId}`, this.hpTweens);
+
+      // 팝인 애니메이션
+      animSpawnRespawn(this, [visual.bg, visual.hpBar, visual.hpBarBg, visual.label, visual.dirArrow]);
     };
 
     this.socket.onCoreHp = (msg: CoreHpMsg) => {
@@ -907,7 +1085,7 @@ export class GameScene extends Phaser.Scene {
 
     this.socket.onGameOver = (msg: GameOverMsg) => {
       this.time.delayedCall(1000, () => {
-        this.scene.start('ResultScene', {
+        this.scene.launch('ResultScene', {
           winnerId: msg.winnerId,
           myPlayerId: this.myPlayerId,
         });

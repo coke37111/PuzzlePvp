@@ -192,6 +192,24 @@ export function animSpawnDestroy(
   doShake();
 }
 
+/** 스폰포인트 리스폰 애니메이션: scale 0→1 팝인 */
+export function animSpawnRespawn(
+  scene: Phaser.Scene,
+  parts: Phaser.GameObjects.GameObject[],
+): void {
+  for (const p of parts as Phaser.GameObjects.Rectangle[]) {
+    p.setScale(0.3).setAlpha(0);
+  }
+  scene.tweens.add({
+    targets: parts,
+    scaleX: 1,
+    scaleY: 1,
+    alpha: 1,
+    duration: 400,
+    ease: 'Back.easeOut',
+  });
+}
+
 /** HP 비율(0~1)에 따른 그래디언트 색상 반환 */
 export function getHpColor(ratio: number): number {
   if (ratio >= 0.5) {

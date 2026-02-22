@@ -123,8 +123,14 @@ export class BallSimulator {
 
     const currentPhase = Math.floor(this.totalPhaseRate);
     let phaseChanged = currentPhase !== this.currentPhase;
+    const prevTiles = new Map<number, TileModel>();
 
     if (phaseChanged) {
+      // 이동 전 위치 저장
+      for (const inst of this.instances.filter(i => !i.isEnd)) {
+        prevTiles.set(inst.ball.id, inst.currentTile);
+      }
+
       // 1. 다음 타일로 이동
       for (const inst of this.instances.filter(i => !i.isEnd)) {
         this.updateNextTile(inst, currentPhase);
@@ -158,9 +164,9 @@ export class BallSimulator {
     // 공 이동 이벤트 — phase 변경 시 1회만 (클라이언트가 자체 보간)
     if (phaseChanged) {
       for (const inst of this.instances.filter(i => !i.isEnd && i.isMoving)) {
-        const nextTile = this.findNearTile(inst.currentTile, inst.direction);
-        if (nextTile) {
-          this.onBallMoved?.(inst.ball, inst.currentTile, nextTile);
+        const prevTile = prevTiles.get(inst.ball.id);
+        if (prevTile) {
+          this.onBallMoved?.(inst.ball, prevTile, inst.currentTile);
         }
       }
     }
@@ -259,10 +265,10 @@ export class BallSimulator {
       }
     } else {
       // 반사판 처리
+      inst.incomingDirection = inst.direction; // 반사 전 입사 방향 저장
       const reflType = this.getReflectorType(inst.currentTile);
       if (reflType !== ReflectorType.None) {
-        const newDir = BallSimulator.getReflectedDirection(inst.direction, reflType);
-        inst.direction = newDir;
+        inst.direction = BallSimulator.getReflectedDirection(inst.direction, reflType);
       }
     }
   }
@@ -307,15 +313,6 @@ export class BallSimulator {
       this.endReserved.push({ instance: inst, tile });
     }
 
-    // 다음 타일 진입 가능 체크
-    if (!inst.isEnd && inst.isMoving) {
-      const nextTile = this.findNearTile(tile, inst.direction);
-      if (!this.checkPassable(nextTile, inst.direction)) {
-        inst.setEnd(EndReason.Blocked);
-        inst.isMoving = false;
-        this.endReserved.push({ instance: inst, tile });
-      }
-    }
   }
 
   findNearTile(tile: TileModel, direction: Direction): TileModel | undefined {

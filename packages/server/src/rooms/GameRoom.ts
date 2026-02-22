@@ -14,6 +14,7 @@ import {
   CoreInfo,
   SpawnHpMsg,
   SpawnDestroyedMsg,
+  SpawnRespawnedMsg,
   ReflectorPlacedMsg,
   ReflectorRemovedMsg,
   BallSpawnedMsg,
@@ -30,7 +31,6 @@ import {
 } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
-
 export class GameRoom {
   readonly id: string;
   private players: [Socket, Socket];
@@ -92,6 +92,11 @@ export class GameRoom {
     this.simulator.onSpawnDestroyed = (spawnId) => {
       const msg: SpawnDestroyedMsg = { spawnId };
       this.broadcast(SocketEvent.SPAWN_DESTROYED, msg);
+    };
+
+    this.simulator.onSpawnRespawned = (spawnId, hp) => {
+      const msg: SpawnRespawnedMsg = { spawnId, hp };
+      this.broadcast(SocketEvent.SPAWN_RESPAWNED, msg);
     };
 
     this.simulator.onReflectorPlaced = (placement) => {
@@ -187,6 +192,7 @@ export class GameRoom {
         spawnPoints,
         cores,
         timePerPhase: DEFAULT_BATTLE_CONFIG.timePerPhase,
+        spawnInterval: DEFAULT_BATTLE_CONFIG.spawnInterval,
       };
       this.players[i].emit(SocketEvent.MATCH_FOUND, msg);
     }

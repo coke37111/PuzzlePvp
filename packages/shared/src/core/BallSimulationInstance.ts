@@ -7,6 +7,8 @@ import { BallSimulatorHistory } from './BallSimulatorHistory';
 export class BallSimulationInstance {
   ball: BallModel;
   direction: Direction;
+  /** 현재 타일에 입사할 때의 방향 (반사판 교체 시 재계산 기준) */
+  incomingDirection: Direction;
   currentTile: TileModel;
   reserveTile: TileModel | undefined;
   reserveTilePhase: number = 0;
@@ -37,6 +39,7 @@ export class BallSimulationInstance {
     this.ball = ball;
     this.currentTile = tile;
     this.direction = direction;
+    this.incomingDirection = direction;
     this.createdPhase = createdPhase;
     this.history.addHistory(createdPhase, tile, direction, reflectorStateHash);
   }

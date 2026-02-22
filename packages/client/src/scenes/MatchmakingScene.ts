@@ -48,7 +48,11 @@ export class MatchmakingScene extends Phaser.Scene {
     this.socket.onMatchFound = (msg: MatchFoundMsg) => {
       this.scene.start('GameScene', { matchData: msg, socket: this.socket });
     };
-    this.socket.connect();
+    if (this.socket.isConnected) {
+      this.socket.joinQueue();
+    } else {
+      this.socket.connect();
+    }
   }
 
   update(time: number, delta: number): void {

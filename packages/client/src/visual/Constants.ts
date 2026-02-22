@@ -7,6 +7,9 @@ export const HP_BAR_HEIGHT = 8;
 export const PLAYER_COLORS = [0x4488ff, 0xff4444];
 export const PLAYER_COLORS_DARK = [0x224488, 0x882222];
 
+// === 공 색상 (팀 구분 없이 흰색) ===
+export const BALL_COLOR = 0xffffff;
+
 // === 배경/그리드 ===
 export const BG_COLOR = 0x12121e;
 export const GRID_LINE_COLOR = 0x3a3a5e;
@@ -70,4 +73,8 @@ export const WALL_BORDER_COLOR = 0xddaa44;
 export const TIME_STOP_OVERLAY_ALPHA = 0.5;
 export const TIME_STOP_GAUGE_COLOR = 0x8844ff;
 export const TIME_STOP_DURATION = 5;
+
+// === 스폰 타이밍 게이지 ===
+export const SPAWN_GAUGE_HEIGHT = 5;
+export const SPAWN_GAUGE_COLOR = 0x44ccff;
 

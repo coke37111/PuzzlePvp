@@ -27,7 +27,7 @@ export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
 export type {
   JoinQueueMsg, PlaceReflectorMsg, RemoveReflectorMsg,
   PlaceWallMsg, UseTimeStopMsg,
-  SpawnPointInfo, CoreInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg,
+  SpawnPointInfo, CoreInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg, SpawnRespawnedMsg,
   ReflectorPlacedMsg, ReflectorRemovedMsg,
   BallSpawnedMsg, BallMovedMsg, BallEndedMsg, GameOverMsg,
   WallPlacedMsg, WallDamagedMsg, WallDestroyedMsg,

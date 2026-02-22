@@ -46,8 +46,8 @@ export interface BattleConfig {
 }
 
 export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
-  spawnInterval: 0.2,
-  timePerPhase: 0.6,
+  spawnInterval:5.0,
+  timePerPhase: 0.2,
   maxReflectorsPerPlayer: 5,
   spawnHp: 10,
   coreHp: 10,
@@ -92,9 +92,14 @@ export class BattleSimulator {
   private isTimeStopped: boolean = false;
   private timeStopRemaining: number = 0;
 
+  // 스폰 리스폰 타이머 (spawnId → 남은 초)
+  private spawnRespawnTimers: Map<number, number> = new Map();
+  static readonly SPAWN_RESPAWN_DELAY = 20;
+
   // 이벤트
   onSpawnHpChanged?: (event: SpawnEvent) => void;
   onSpawnDestroyed?: (spawnId: number) => void;
+  onSpawnRespawned?: (spawnId: number, hp: number) => void;
   onReflectorPlaced?: (placement: ReflectorPlacement) => void;
   onReflectorRemoved?: (x: number, y: number, playerId: number) => void;
   onGameOver?: (result: BattleResult) => void;
@@ -187,28 +192,23 @@ export class BattleSimulator {
       // 스폰포인트 체크
       const sp = this.spawnPoints.find(s => s.tile.x === tile.x && s.tile.y === tile.y);
       if (sp && sp.active) {
-        // 아군 공은 아군 스폰포인트에 피해 없음
-        if (ball.ownerId !== sp.ownerId) {
-          sp.damage();
-          if (!sp.active) {
-            this.onSpawnDestroyed?.(sp.id);
-          }
-          this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
+        sp.damage();
+        if (!sp.active) {
+          this.onSpawnDestroyed?.(sp.id);
+          this.spawnRespawnTimers.set(sp.id, BattleSimulator.SPAWN_RESPAWN_DELAY);
         }
+        this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
         return true; // 공 캡처
       }
 
       // 코어 체크 (승패 결정)
       const core = this.cores.find(c => c.tile.x === tile.x && c.tile.y === tile.y);
       if (core && core.active) {
-        // 아군 공은 아군 코어에 피해 없음
-        if (ball.ownerId !== core.ownerId) {
-          core.damage();
-          this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
-          if (!core.active) {
-            this.onCoreDestroyed?.(core.id);
-            this.checkWinCondition();
-          }
+        core.damage();
+        this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
+        if (!core.active) {
+          this.onCoreDestroyed?.(core.id);
+          this.checkWinCondition();
         }
         return true; // 공 캡처
       }
@@ -251,6 +251,21 @@ export class BattleSimulator {
     if (this.spawnTimer >= this.config.spawnInterval) {
       this.spawnTimer -= this.config.spawnInterval;
       this.spawnAll();
+    }
+
+    // 스폰 리스폰 타이머
+    for (const [spawnId, remaining] of this.spawnRespawnTimers) {
+      const next = remaining - delta;
+      if (next <= 0) {
+        this.spawnRespawnTimers.delete(spawnId);
+        const sp = this.spawnPoints.find(s => s.id === spawnId);
+        if (sp) {
+          sp.respawn(this.config.spawnHp);
+          this.onSpawnRespawned?.(sp.id, sp.hp);
+        }
+      } else {
+        this.spawnRespawnTimers.set(spawnId, next);
+      }
     }
   }
 
@@ -307,6 +322,13 @@ export class BattleSimulator {
     if (!success) return false;
 
     if (!isReplacing) queue.push(tileIndex);
+
+    // 해당 타일에 있는 공의 방향 즉시 재계산 (입사 방향 기준으로 올바르게 계산)
+    for (const inst of this.simulator.instances) {
+      if (!inst.isEnd && inst.currentTile.x === x && inst.currentTile.y === y) {
+        inst.direction = BallSimulator.getReflectedDirection(inst.incomingDirection, type);
+      }
+    }
 
     const placement = this.map.reflectors.get(tileIndex)!;
     this.onReflectorPlaced?.(placement);

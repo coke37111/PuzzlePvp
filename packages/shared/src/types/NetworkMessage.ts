@@ -55,6 +55,7 @@ export interface MatchFoundMsg {
   spawnPoints: SpawnPointInfo[];
   cores: CoreInfo[];
   timePerPhase: number;  // 공 이동 1칸 소요시간 (초)
+  spawnInterval: number; // 공 자동 발사 주기 (초)
 }
 
 export interface SpawnHpMsg {
@@ -65,6 +66,11 @@ export interface SpawnHpMsg {
 
 export interface SpawnDestroyedMsg {
   spawnId: number;
+}
+
+export interface SpawnRespawnedMsg {
+  spawnId: number;
+  hp: number;
 }
 
 export interface ReflectorPlacedMsg {
@@ -159,6 +165,7 @@ export const SocketEvent = {
   MATCH_FOUND: 'match_found',
   SPAWN_HP: 'spawn_hp',
   SPAWN_DESTROYED: 'spawn_destroyed',
+  SPAWN_RESPAWNED: 'spawn_respawned',
   REFLECTOR_PLACED: 'reflector_placed',
   REFLECTOR_REMOVED: 'reflector_removed',
   BALL_SPAWNED: 'ball_spawned',

@@ -20,6 +20,7 @@ import {
   TimeStopEndedMsg,
   CoreHpMsg,
   CoreDestroyedMsg,
+  SpawnRespawnedMsg,
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
@@ -34,6 +35,7 @@ export class SocketClient {
   onMatchFound?: (msg: MatchFoundMsg) => void;
   onSpawnHp?: (msg: SpawnHpMsg) => void;
   onSpawnDestroyed?: (msg: SpawnDestroyedMsg) => void;
+  onSpawnRespawned?: (msg: SpawnRespawnedMsg) => void;
   onReflectorPlaced?: (msg: ReflectorPlacedMsg) => void;
   onReflectorRemoved?: (msg: ReflectorRemovedMsg) => void;
   onBallSpawned?: (msg: BallSpawnedMsg) => void;
@@ -73,6 +75,7 @@ export class SocketClient {
     this.socket.on(SocketEvent.MATCH_FOUND, (msg: MatchFoundMsg) => this.onMatchFound?.(msg));
     this.socket.on(SocketEvent.SPAWN_HP, (msg: SpawnHpMsg) => this.onSpawnHp?.(msg));
     this.socket.on(SocketEvent.SPAWN_DESTROYED, (msg: SpawnDestroyedMsg) => this.onSpawnDestroyed?.(msg));
+    this.socket.on(SocketEvent.SPAWN_RESPAWNED, (msg: SpawnRespawnedMsg) => this.onSpawnRespawned?.(msg));
     this.socket.on(SocketEvent.REFLECTOR_PLACED, (msg: ReflectorPlacedMsg) => this.onReflectorPlaced?.(msg));
     this.socket.on(SocketEvent.REFLECTOR_REMOVED, (msg: ReflectorRemovedMsg) => this.onReflectorRemoved?.(msg));
     this.socket.on(SocketEvent.BALL_SPAWNED, (msg: BallSpawnedMsg) => this.onBallSpawned?.(msg));
@@ -86,6 +89,10 @@ export class SocketClient {
     this.socket.on(SocketEvent.TIME_STOP_ENDED, (msg: TimeStopEndedMsg) => this.onTimeStopEnded?.(msg));
     this.socket.on(SocketEvent.CORE_HP, (msg: CoreHpMsg) => this.onCoreHp?.(msg));
     this.socket.on(SocketEvent.CORE_DESTROYED, (msg: CoreDestroyedMsg) => this.onCoreDestroyed?.(msg));
+  }
+
+  get isConnected(): boolean {
+    return this.socket.connected;
   }
 
   connect(): void {
