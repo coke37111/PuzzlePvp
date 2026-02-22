@@ -37,7 +37,7 @@ Classic1의 Core-UnityAdapter 패턴에서 영감을 받아, **shared 패키지�
 |------|-----|------|
 | `Direction.ts` | None, Up, Down, Left, Right | 4방향 + None |
 | `TileType.ts` | Empty, Start, Goal, Gold, Split, Portal, Block, 반사판 4종 | 타일 종류 |
-| `ReflectorType.ts` | TopLeft, TopRight, BottomLeft, BottomRight | 반사판 방향 |
+| `ReflectorType.ts` | Slash(1), Backslash(2) | 반사판 종류 (`/`, `\`) |
 | `EndReason.ts` | Goal, Blocked, Split, Crash, Loop, PortalUnlinked | 공 종료 사유 |
 
 ### 핵심 모델
@@ -54,14 +54,13 @@ Classic1의 Core-UnityAdapter 패턴에서 영감을 받아, **shared 패키지�
 ```
 BallSimulator (공 물리 시뮬레이션)
 ├── BallSimulationInstance (개별 공 상태)
-├── BallSimulatorHistory (루프 감지)
 └── Phase 기반 이동 루프
 
 BattleSimulator (대전 시뮬레이터)
 ├── BallSimulator 확장
 ├── SpawnPointModel[] (출발점 HP)
-├── 자동 공 발사 (spawnInterval)
-├── 반사판 한도 관리 (초과 시 거부, 기존 위치 타입 변경 허용)
+├── 자동 공 발사 (spawnInterval: 0.2초)
+├── 반사판 한도 관리 (5개 초과 시 거부, 같은 위치 타입 변경 허용)
 ├── 적 스폰존 보호 (설치 금지 영역)
 └── 승리 조건 판정
 ```
@@ -108,8 +107,8 @@ BattleSimulator (대전 시뮬레이터)
 - 50ms 틱 타이머 (20 FPS)
 - BattleSimulator 구동
 - 이벤트 콜백 → Socket.io 브로드캐스트
-- 플레이어 연결 끊김 → 상대 승리 처리
-- stop() 시 타이머 정리 + onDestroy 콜백
+- 플레이어 연결 끊김 → 상대 승리 처리 (틱 타이머 초기화 후 disconnect 핸들러 등록으로 레이스 컨디션 방지)
+- stop() 시 타이머 정리 + 모든 소켓 리스너 해제 + onDestroy 콜백
 
 ---
 
@@ -140,7 +139,7 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 
 | 파일 | 역할 |
 |------|------|
-| `Constants.ts` | 타일 크기, 색상, HP 그라디언트 색상, 팝업 버튼 크기/간격, 애니메이션 타이밍 |
+| `Constants.ts` | 타일 크기, 색상, HP 그라디언트 색상, 애니메이션 타이밍 |
 | `GridRenderer.ts` | 그리드 타일 렌더링 (배경, 타일 색상, 스폰존 오버레이) |
 | `VisualEffects.ts` | HP 그라디언트 색상 계산, 대미지 팝업 애니메이션 |
 
@@ -152,9 +151,9 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 
 | 요소 | 설명 |
 |------|------|
-| 반사판 카운트 | `◆ N/5` 형식, 우상단 표시 |
-| 설치 팝업 | 타일 클릭 → 해당 타일 위치에 2×2 버튼 팝업 (X 버튼 중앙) |
-| 팝업 버튼 | TopLeft / TopRight / BottomLeft / BottomRight 반투명, 클릭으로 반사판 타입 선택 |
+| 블루팀 반사판 카운트 | `◆ N/5` 형식, 좌상단 표시 (파랑) |
+| 레드팀 반사판 카운트 | `◆ N/5` 형식, 우상단 표시 (빨강) |
+| 터치 사이클 | 빈 타일 터치 → `/` 설치 → `\` 교체 → 제거 (팝업 없음) |
 | 스폰존 오버레이 | 플레이어별 색상으로 설치 금지 영역 표시 (내 구역 + 상대 구역 모두) |
 | HP 바 | 스폰 포인트 아래, HP 비율에 따라 색상 변경 |
 | 토스트 알림 | 반사판 한도 초과 시 하단 메시지 표시 |
@@ -199,34 +198,23 @@ HTTP 요청 흐름:
 
 ```typescript
 update(deltaTime):
-  phaseRate += deltaTime / timePerPhase  // 기본 0.6초
+  phaseRate += deltaTime / timePerPhase  // 기본 0.3초
   currentPhase = floor(phaseRate)
 
   매 phase마다:
     1. updateNextTile()         // 다음 타일로 이동
-    2. procCurrentTileEvent()   // 타일 이벤트 (반사, 분기, 골인)
-    3. checkBallCollisions()    // 충돌 감지
-    4. checkEndConditions()     // 종료 조건
+    2. procCurrentTileEvent()   // 타일 이벤트 (반사, 골인)
+    3. checkEndConditions()     // 종료 조건
 ```
 
 ### 반사판 방향 변환
 
+거울은 양방향 반사 — 어느 방향에서든 항상 통과하며 방향을 전환.
+
 | 반사판 | Up → | Down → | Left → | Right → |
 |--------|------|--------|--------|---------|
-| TopLeft | Right | 막힘 | Down | 막힘 |
-| TopRight | Left | 막힘 | 막힘 | Down |
-| BottomLeft | 막힘 | Right | Up | 막힘 |
-| BottomRight | 막힘 | Left | 막힘 | Up |
-
-### 충돌 감지
-
-1. **교차 충돌**: A가 tile1→tile2, B가 tile2→tile1 동시 이동 → Crash
-2. **집합 충돌**: 여러 공이 같은 비-목표 타일로 향함 → Crash
-
-### 루프 감지
-
-상태 키: `(tileIndex, direction, reflectorStateHash)`
-같은 상태 3회 이상 방문 시 Loop 판정
+| Slash `/` | Right | Left | Down | Up |
+| Backslash `\` | Left | Right | Up | Down |
 
 ### 승리 조건
 

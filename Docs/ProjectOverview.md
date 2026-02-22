@@ -1,4 +1,4 @@
-# PuzzlePvP - 프로젝트 개요
+﻿# PuzzlePvP - 프로젝트 개요
 
 ## 게임 소개
 
@@ -14,11 +14,11 @@ Classic1의 공+반사판 퍼즐 메카닉을 기반으로 한 **HTML5 1v1 실�
 
 | 요소 | 설명 |
 |------|------|
-| 공 발사 | 활성 출발점에서 자동 연속 발사 (기본 1초 간격) |
-| 반사판 | 플레이어당 5개 한도, 한도 초과 시 신규 설치 거부 |
-| 공유 보드 | 상대 반사판에 내 공이 반사됨 (공격/수비 겸용) |
-| 출발점 HP | 내 공 도착 → HP 회복 / 적 공 도착 → HP 감소 |
-| 출발점 파괴 | HP=0 → 비활성화, 공 생성 중단 |
+| 공 발사 | 활성 출발점에서 자동 연속 발사 (0.2초 간격) |
+| 반사판 | 플레이어당 5개 한도, `/`(Slash) · `\`(Backslash) 2종 양방향 반사 |
+| 터치 사이클 | 빈 타일 → `/` 설치 → `\` 교체 → 제거 (팝업 없음) |
+| 공유 보드 | 공끼리 충돌 없음, 반사판은 모든 방향에서 통과·반사 |
+| 출발점 HP | 적 공 도착 → HP 감소, HP=0 → 비활성화 |
 | 승리 조건 | 상대의 모든 출발점 HP=0 |
 
 ---
@@ -80,7 +80,7 @@ client/ (shared 의존)
 | 파라미터 | 값 | 설명 |
 |----------|-----|------|
 | `timePerPhase` | 0.6초 | 공 한 칸 이동 시간 |
-| `spawnInterval` | 1.0초 | 출발점당 공 자동 발사 주기 |
+| `spawnInterval` | 0.2초 | 출발점당 공 자동 발사 주기 |
 | `spawnMaxHp` | 5 | 출발점 최대 HP |
 | `maxReflectorsPerPlayer` | 5 | 플레이어당 반사판 최대 개수 |
 | 서버 틱 | 50ms (20 FPS) | 서버 시뮬레이션 주기 |
@@ -95,7 +95,7 @@ client/ (shared 의존)
 P1 출발점: (0,2), (0,8) — 좌측 (→ 방향 발사)
 P2 출발점: (10,2), (10,8) — 우측 (← 방향 발사)
 
-중앙 장애물: (5,2), (5,5), (5,8)
+중앙 장애물: (4,2), (6,2), (5,5), (4,8), (6,8)
 각 출발점 MaxHP: 5
 ```
 
@@ -147,7 +147,6 @@ Railway 단일 서비스로 클라이언트 + 서버 통합 배포.
 | `Core/Model/BallSimulationInstance.cs` | `shared/core/BallSimulationInstance.ts` |
 | `UI/InGameReflectorDisplay.cs` | `client/scenes/GameScene.ts` (반사판 카운트) |
 | `UI/MobDisplayUI.cs` | `client/visual/VisualEffects.ts` (HP 그래디언트, 데미지 팝업) |
-| `UI/ReflectorSelectPopup.cs` | `client/scenes/GameScene.ts` (반사판 선택 팝업) |
 | (신규) | `shared/core/SpawnPointModel.ts` |
 | (신규) | `shared/core/BattleSimulator.ts` |
 | (신규) | `shared/core/TileRegistry.ts` |
