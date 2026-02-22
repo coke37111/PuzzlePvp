@@ -81,7 +81,8 @@ export class BattleSimulator {
   spawnPoints: SpawnPointModel[] = [];
   cores: CoreModel[] = [];
   private spawnTimer: number = 0;
-  private phaseNumber: number = 0;
+  private _phaseNumber: number = 0;
+  get phaseNumber(): number { return this._phaseNumber; }
   private pendingSpawnQueue: Array<{ tile: TileModel; direction: Direction; ownerId: number }> = [];
   private pendingSpawnTimer: number = 0;
   private static readonly SPAWN_FIRE_INTERVAL = 0.2;
@@ -150,7 +151,7 @@ export class BattleSimulator {
     this.nextSpawnPointId = 1;
     this.nextCoreId = 1;
     this.spawnTimer = 0;
-    this.phaseNumber = 0;
+    this._phaseNumber = 0;
     this.pendingSpawnQueue = [];
     this.pendingSpawnTimer = 0;
     this.isRunning = true;
@@ -287,8 +288,8 @@ export class BattleSimulator {
   }
 
   private spawnAll(): void {
-    this.phaseNumber++;
-    const ballCount = Math.floor(this.phaseNumber / 10) + 1;
+    this._phaseNumber++;
+    const ballCount = Math.floor(this._phaseNumber / 10) + 1;
 
     // 첫 번째 공은 즉시 발사, 나머지는 0.2초 간격 큐에 추가
     let firstFired = false;

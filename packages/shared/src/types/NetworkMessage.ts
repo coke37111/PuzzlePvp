@@ -92,6 +92,7 @@ export interface BallSpawnedMsg {
   x: number;
   y: number;
   direction: Direction;
+  phaseNumber: number;
 }
 
 export interface BallMovedMsg {

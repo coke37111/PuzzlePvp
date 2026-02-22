@@ -244,8 +244,6 @@ export class GameScene extends Phaser.Scene {
     this.setupUI();
     this.setupSocketEvents();
     this.startSpawnGauge();
-    this.spawnGaugeFiring = true;
-    this.time.delayedCall(100, () => { this.spawnGaugeFiring = false; });
 
   }
 
@@ -812,9 +810,13 @@ export class GameScene extends Phaser.Scene {
     this.spawnGaugeFill.scaleX = 0;
   }
 
-  private startSpawnGauge(): void {
+  private startSpawnGauge(phaseNumber?: number): void {
     if (!this.spawnGaugeFill) return;
-    this.phaseCount++;
+    if (phaseNumber !== undefined) {
+      this.phaseCount = phaseNumber;
+    } else {
+      this.phaseCount++;
+    }
     if (this.phaseText) {
       this.phaseText.setText(`${this.phaseCount}`);
       this.tweens.add({
@@ -929,16 +931,11 @@ export class GameScene extends Phaser.Scene {
       // 종료 애니메이션 중인 같은 ID 방어
       if (this.endingBalls.has(msg.ballId)) return;
 
-      // 스폰 타이밍 게이지: 같은 배치의 첫 번째 공 이벤트에서만 리셋
-      if (!this.spawnGaugeFiring && this.spawnGaugeFill) {
-        this.spawnGaugeFiring = true;
+      // 스폰 타이밍 게이지: 페이즈가 바뀔 때만 리셋 (서버 phaseNumber 기준)
+      if (msg.phaseNumber !== this.phaseCount && this.spawnGaugeFill) {
         this.tweens.killTweensOf(this.spawnGaugeFill);
-        this.startSpawnGauge();
+        this.startSpawnGauge(msg.phaseNumber);
         this.shakeBoard();
-        // 같은 배치의 다른 BALL_SPAWNED 이벤트 무시 (100ms 디바운스)
-        this.time.delayedCall(100, () => {
-          this.spawnGaugeFiring = false;
-        });
       }
 
       const px = msg.x * TILE_SIZE + TILE_SIZE / 2;

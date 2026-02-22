@@ -59,6 +59,7 @@ export class GameRoom {
         x: ball.placementTile.x,
         y: ball.placementTile.y,
         direction,
+        phaseNumber: this.simulator.phaseNumber,
       };
       this.broadcast(SocketEvent.BALL_SPAWNED, msg);
     };
