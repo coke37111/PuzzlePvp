@@ -277,17 +277,17 @@ export class GameScene extends Phaser.Scene {
 
           const key = `${nx},${ny}`;
 
-          // 설치 불가 추적은 적 스폰 주변만
-          if (isEnemy) this.enemyZoneTiles.add(key);
-
-          // 오버레이는 중복 없이 모두 표시
-          if (drawnKeys.has(key)) continue;
-          drawnKeys.add(key);
-
-          const px = nx * TILE_SIZE + TILE_SIZE / 2;
-          const py = ny * TILE_SIZE + TILE_SIZE / 2;
-          const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
-          this.tilesLayer.add(overlay);
+          if (isEnemy) {
+            // 적 스폰 주변: 설치 불가 추적 + 오버레이
+            this.enemyZoneTiles.add(key);
+            if (drawnKeys.has(key)) continue;
+            drawnKeys.add(key);
+            const px = nx * TILE_SIZE + TILE_SIZE / 2;
+            const py = ny * TILE_SIZE + TILE_SIZE / 2;
+            const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
+            this.tilesLayer.add(overlay);
+          }
+          // 아군 스폰 주변: 오버레이 없음 (설치 가능, 적만 서버에서 차단)
         }
       }
     }
