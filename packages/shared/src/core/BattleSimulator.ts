@@ -252,8 +252,14 @@ export class BattleSimulator {
     const tileIndex = x + y * 100;
     const isReplacing = queue.includes(tileIndex);
 
-    // 새 설치이고 한도 초과면 거부
-    if (!isReplacing && queue.length >= this.config.maxReflectorsPerPlayer) return false;
+    // 한도 초과 시 가장 오래된 반사판 자동 제거 (FIFO)
+    if (!isReplacing && queue.length >= this.config.maxReflectorsPerPlayer) {
+      const oldestIndex = queue.shift()!;
+      const ox = oldestIndex % 100;
+      const oy = Math.floor(oldestIndex / 100);
+      const removed = this.map.removeReflector(ox, oy);
+      if (removed) this.onReflectorRemoved?.(ox, oy, playerId);
+    }
 
     const success = this.map.placeReflector(x, y, type, playerId);
     if (!success) return false;

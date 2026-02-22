@@ -440,13 +440,7 @@ export class GameScene extends Phaser.Scene {
       if (this.enemyZoneTiles.has(`${gridX},${gridY}`)) return;
 
       if (!existing) {
-        // 빈 타일 → Slash 설치
-        const myCount = [...this.reflectorVisuals.values()]
-          .filter(v => v.playerId === this.myPlayerId).length;
-        if (myCount >= MAX_REFLECTORS_PER_PLAYER) {
-          this.showToast('반사판 한도 초과. 기존 반사판을 먼저 제거하세요.');
-          return;
-        }
+        // 빈 타일 → Slash 설치 (한도 초과 시 서버에서 FIFO 자동 제거)
         this.socket.placeReflector(gridX, gridY, ReflectorType.Slash);
       } else if (existing.playerId !== this.myPlayerId) {
         // 상대 반사판 → 무시
