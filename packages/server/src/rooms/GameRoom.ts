@@ -132,6 +132,10 @@ export class GameRoom {
       this.players[i].emit(SocketEvent.MATCH_FOUND, msg);
     }
 
+    // 서버 틱 시작 (disconnect 핸들러 등록 전에 설정)
+    this.lastTickTime = Date.now();
+    this.tickTimer = setInterval(() => this.tick(), TICK_INTERVAL_MS);
+
     // 입력 이벤트 등록
     for (let i = 0; i < 2; i++) {
       const socket = this.players[i];
@@ -149,6 +153,7 @@ export class GameRoom {
       });
 
       socket.on('disconnect', () => {
+        if (!this.tickTimer) return;  // 이미 종료된 게임 무시
         console.log(`[GameRoom ${this.id}] 플레이어 ${playerId} 연결 끊김`);
         // 상대에게 승리 알림
         const opponentIdx = playerId === 0 ? 1 : 0;
@@ -160,10 +165,6 @@ export class GameRoom {
         this.stop();
       });
     }
-
-    // 서버 틱 시작
-    this.lastTickTime = Date.now();
-    this.tickTimer = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
     console.log(`[GameRoom ${this.id}] 게임 시작`);
   }
@@ -185,6 +186,7 @@ export class GameRoom {
     for (const socket of this.players) {
       socket.removeAllListeners(SocketEvent.PLACE_REFLECTOR);
       socket.removeAllListeners(SocketEvent.REMOVE_REFLECTOR);
+      socket.removeAllListeners('disconnect');
     }
 
     this.onDestroy?.();
