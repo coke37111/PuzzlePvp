@@ -60,7 +60,7 @@ export class SocketClient {
   }
 
   private constructor() {
-    this.socket = io(SERVER_URL, { autoConnect: false });
+    this.socket = io(SERVER_URL, { autoConnect: false, transports: ['websocket'] });
 
     this.socket.on('connect', () => {
       console.log('[SocketClient] 서버 연결됨');
