@@ -7,18 +7,52 @@ import { Direction } from '../enums/Direction';
 import { ReflectorType } from '../enums/ReflectorType';
 import { EndReason } from '../enums/EndReason';
 
+export interface WallState {
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  ownerId: number;
+}
+
+export interface ItemCounts {
+  wall: number;
+  timeStop: number;
+}
+
+export interface WallEvent {
+  x: number;
+  y: number;
+  hp: number;
+  playerId?: number;
+  maxHp?: number;
+}
+
+export interface TimeStopEvent {
+  playerId: number;
+  duration: number;
+}
+
 export interface BattleConfig {
   spawnInterval: number;    // 초 단위 (기본 1.0)
   timePerPhase: number;     // 초 단위 (기본 0.3, 클수록 느림)
   maxReflectorsPerPlayer: number;  // 플레이어당 반사판 한도 (기본 5)
-  spawnHp: number;          // SpawnPoint 기본 HP (기본 5)
+  spawnHp: number;          // SpawnPoint 기본 HP (기본 30)
+  maxWallsPerPlayer: number;       // 플레이어당 성벽 아이템 사용 횟수 (기본 3)
+  wallHp: number;           // 성벽 HP (기본 10)
+  timeStopUsesPerPlayer: number;   // 시간 정지 사용 횟수 (기본 1)
+  timeStopDuration: number; // 시간 정지 지속 시간 초 (기본 5)
 }
 
 export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   spawnInterval: 0.2,
   timePerPhase: 0.6,
   maxReflectorsPerPlayer: 5,
-  spawnHp: 5,
+  spawnHp: 30,
+  maxWallsPerPlayer: 3,
+  wallHp: 10,
+  timeStopUsesPerPlayer: 1,
+  timeStopDuration: 5,
 };
 
 export interface SpawnEvent {
@@ -42,6 +76,12 @@ export class BattleSimulator {
   private nextSpawnPointId: number = 1;
   private isRunning: boolean = false;
 
+  // 아이템
+  private itemCounts: Map<number, ItemCounts> = new Map();  // playerId → counts
+  private walls: Map<string, WallState> = new Map();  // "x,y" → WallState
+  private isTimeStopped: boolean = false;
+  private timeStopRemaining: number = 0;
+
   // 이벤트
   onSpawnHpChanged?: (event: SpawnEvent) => void;
   onSpawnDestroyed?: (spawnId: number) => void;
@@ -51,6 +91,11 @@ export class BattleSimulator {
   onBallCreated?: (ball: BallModel, direction: Direction) => void;
   onBallMoved?: (ball: BallModel, from: TileModel, to: TileModel) => void;
   onBallEnded?: (ball: BallModel, tile: TileModel, reason: EndReason) => void;
+  onWallPlaced?: (event: WallEvent & { playerId: number; maxHp: number }) => void;
+  onWallDamaged?: (event: WallEvent) => void;
+  onWallDestroyed?: (x: number, y: number) => void;
+  onTimeStopStarted?: (event: TimeStopEvent) => void;
+  onTimeStopEnded?: () => void;
 
   constructor(map: MapModel, config: Partial<BattleConfig> = {}) {
     this.map = map;
@@ -60,6 +105,22 @@ export class BattleSimulator {
     // 반사판 큐 초기화 (2명)
     this.reflectorQueues.set(0, []);
     this.reflectorQueues.set(1, []);
+
+    // 아이템 초기화 (2명)
+    this.itemCounts.set(0, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
+    this.itemCounts.set(1, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
+  }
+
+  getItemCounts(playerId: number): ItemCounts {
+    return this.itemCounts.get(playerId) ?? { wall: 0, timeStop: 0 };
+  }
+
+  getWall(x: number, y: number): WallState | undefined {
+    return this.walls.get(`${x},${y}`);
+  }
+
+  get isGameTimeStopped(): boolean {
+    return this.isTimeStopped;
   }
 
   init(): void {
@@ -83,8 +144,23 @@ export class BattleSimulator {
     this.simulator.onBallMoved = (ball, from, to) => this.onBallMoved?.(ball, from, to);
     this.simulator.onBallEnded = (ball, tile, reason) => this.onBallEnded?.(ball, tile, reason);
 
-    // 공이 타일에 도착할 때 SpawnPoint 체크
+    // 공이 타일에 도착할 때 SpawnPoint/Wall 체크
     this.simulator.onBallArrivedAtTile = (ball, tile) => {
+      // 성벽 체크
+      const wallKey = `${tile.x},${tile.y}`;
+      const wall = this.walls.get(wallKey);
+      if (wall) {
+        wall.hp -= 1;
+        if (wall.hp <= 0) {
+          this.walls.delete(wallKey);
+          this.onWallDestroyed?.(tile.x, tile.y);
+        } else {
+          this.onWallDamaged?.({ x: tile.x, y: tile.y, hp: wall.hp });
+        }
+        return true; // 공 캡처
+      }
+
+      // 스폰포인트 체크
       const sp = this.spawnPoints.find(s => s.tile.x === tile.x && s.tile.y === tile.y);
       if (!sp || !sp.active) return false;
 
@@ -108,6 +184,16 @@ export class BattleSimulator {
   /** delta(초) 만큼 시뮬레이션 진행 */
   update(delta: number): void {
     if (!this.isRunning) return;
+
+    // 시간 정지 처리
+    if (this.isTimeStopped) {
+      this.timeStopRemaining -= delta;
+      if (this.timeStopRemaining <= 0) {
+        this.isTimeStopped = false;
+        this.onTimeStopEnded?.();
+      }
+      return;
+    }
 
     // 공 시뮬레이션 진행 (인스턴스 없어도 timer는 계속)
     if (this.simulator.instances.length > 0) {
@@ -191,6 +277,36 @@ export class BattleSimulator {
       this.onReflectorRemoved?.(x, y, playerId);
     }
     return removed !== undefined;
+  }
+
+  placeWall(playerId: number, x: number, y: number): boolean {
+    const counts = this.itemCounts.get(playerId)!;
+    if (counts.wall <= 0) return false;
+
+    // 빈 타일이어야 하고 반사판/스폰포인트가 없어야 함
+    const tile = this.map.getTile(x, y);
+    if (!tile || !tile.isReflectorSetable) return false;
+    if (this.map.reflectors.has(x + y * 100)) return false;
+    if (this.walls.has(`${x},${y}`)) return false;
+    if (this.spawnPoints.some(s => s.tile.x === x && s.tile.y === y)) return false;
+
+    counts.wall -= 1;
+    const wall: WallState = { x, y, hp: this.config.wallHp, maxHp: this.config.wallHp, ownerId: playerId };
+    this.walls.set(`${x},${y}`, wall);
+    this.onWallPlaced?.({ x, y, hp: wall.hp, maxHp: wall.maxHp, playerId });
+    return true;
+  }
+
+  useTimeStop(playerId: number): boolean {
+    const counts = this.itemCounts.get(playerId)!;
+    if (counts.timeStop <= 0) return false;
+    if (this.isTimeStopped) return false;
+
+    counts.timeStop -= 1;
+    this.isTimeStopped = true;
+    this.timeStopRemaining = this.config.timeStopDuration;
+    this.onTimeStopStarted?.({ playerId, duration: this.config.timeStopDuration });
+    return true;
   }
 
   getSpawnPoint(id: number): SpawnPointModel | undefined {

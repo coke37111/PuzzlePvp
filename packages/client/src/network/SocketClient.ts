@@ -12,6 +12,12 @@ import {
   GameOverMsg,
   PlaceReflectorMsg,
   RemoveReflectorMsg,
+  PlaceWallMsg,
+  WallPlacedMsg,
+  WallDamagedMsg,
+  WallDestroyedMsg,
+  TimeStopStartedMsg,
+  TimeStopEndedMsg,
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
@@ -32,6 +38,11 @@ export class SocketClient {
   onBallMoved?: (msg: BallMovedMsg) => void;
   onBallEnded?: (msg: BallEndedMsg) => void;
   onGameOver?: (msg: GameOverMsg) => void;
+  onWallPlaced?: (msg: WallPlacedMsg) => void;
+  onWallDamaged?: (msg: WallDamagedMsg) => void;
+  onWallDestroyed?: (msg: WallDestroyedMsg) => void;
+  onTimeStopStarted?: (msg: TimeStopStartedMsg) => void;
+  onTimeStopEnded?: (msg: TimeStopEndedMsg) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 
@@ -64,6 +75,11 @@ export class SocketClient {
     this.socket.on(SocketEvent.BALL_MOVED, (msg: BallMovedMsg) => this.onBallMoved?.(msg));
     this.socket.on(SocketEvent.BALL_ENDED, (msg: BallEndedMsg) => this.onBallEnded?.(msg));
     this.socket.on(SocketEvent.GAME_OVER, (msg: GameOverMsg) => this.onGameOver?.(msg));
+    this.socket.on(SocketEvent.WALL_PLACED, (msg: WallPlacedMsg) => this.onWallPlaced?.(msg));
+    this.socket.on(SocketEvent.WALL_DAMAGED, (msg: WallDamagedMsg) => this.onWallDamaged?.(msg));
+    this.socket.on(SocketEvent.WALL_DESTROYED, (msg: WallDestroyedMsg) => this.onWallDestroyed?.(msg));
+    this.socket.on(SocketEvent.TIME_STOP_STARTED, (msg: TimeStopStartedMsg) => this.onTimeStopStarted?.(msg));
+    this.socket.on(SocketEvent.TIME_STOP_ENDED, (msg: TimeStopEndedMsg) => this.onTimeStopEnded?.(msg));
   }
 
   connect(): void {
@@ -88,5 +104,14 @@ export class SocketClient {
     const msg: RemoveReflectorMsg = { x, y };
     console.log(`[SocketClient] 반사판 해제 전송: (${x},${y}) connected=${this.socket.connected}`);
     this.socket.emit(SocketEvent.REMOVE_REFLECTOR, msg);
+  }
+
+  placeWall(x: number, y: number): void {
+    const msg: PlaceWallMsg = { x, y };
+    this.socket.emit(SocketEvent.PLACE_WALL, msg);
+  }
+
+  useTimeStop(): void {
+    this.socket.emit(SocketEvent.USE_TIME_STOP);
   }
 }

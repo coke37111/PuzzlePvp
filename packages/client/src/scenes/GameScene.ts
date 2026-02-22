@@ -13,6 +13,10 @@ import {
   ReflectorPlacedMsg,
   ReflectorRemovedMsg,
   GameOverMsg,
+  WallPlacedMsg,
+  WallDamagedMsg,
+  WallDestroyedMsg,
+  TimeStopStartedMsg,
   createBattleTileRegistry,
   MapModel,
   EMPTY_TILE_INDEX,
@@ -28,6 +32,9 @@ import {
   GLOW_RADIUS_EXTRA, GLOW_ALPHA,
   ENEMY_ZONE_ALPHA,
   MAX_REFLECTORS_PER_PLAYER,
+  INITIAL_WALL_COUNT, INITIAL_TIME_STOP_COUNT,
+  WALL_COLOR, WALL_BORDER_COLOR,
+  TIME_STOP_OVERLAY_ALPHA, TIME_STOP_GAUGE_COLOR, TIME_STOP_DURATION,
 } from '../visual/Constants';
 import { drawGridLines } from '../visual/GridRenderer';
 import {
@@ -71,6 +78,16 @@ interface ReflectorVisual {
   playerId: number;
 }
 
+interface WallVisual {
+  bg: Phaser.GameObjects.Rectangle;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBarBg: Phaser.GameObjects.Rectangle;
+  hpText: Phaser.GameObjects.Text;
+  x: number;
+  y: number;
+  maxHp: number;
+}
+
 export class GameScene extends Phaser.Scene {
   private socket!: SocketClient;
   private myPlayerId: number = 0;
@@ -91,6 +108,27 @@ export class GameScene extends Phaser.Scene {
   private uiLayer!: Phaser.GameObjects.Container;
 
   private reflectorCountTexts: [Phaser.GameObjects.Text | null, Phaser.GameObjects.Text | null] = [null, null];
+
+  // 아이템 UI
+  private itemUiTexts: { wall: [Phaser.GameObjects.Text | null, Phaser.GameObjects.Text | null], timeStop: [Phaser.GameObjects.Text | null, Phaser.GameObjects.Text | null] } = {
+    wall: [null, null], timeStop: [null, null],
+  };
+  private itemCounts: { wall: [number, number], timeStop: [number, number] } = {
+    wall: [INITIAL_WALL_COUNT, INITIAL_WALL_COUNT],
+    timeStop: [INITIAL_TIME_STOP_COUNT, INITIAL_TIME_STOP_COUNT],
+  };
+  private wallMode: boolean = false;
+  private wallModeText: Phaser.GameObjects.Text | null = null;
+  private wallCursor: Phaser.GameObjects.Rectangle | null = null;
+  private wallVisuals: Map<string, WallVisual> = new Map();
+
+  // 시간 정지 오버레이
+  private timeStopOverlay: Phaser.GameObjects.Rectangle | null = null;
+  private timeStopLabel: Phaser.GameObjects.Text | null = null;
+  private timeStopGaugeBg: Phaser.GameObjects.Rectangle | null = null;
+  private timeStopGauge: Phaser.GameObjects.Rectangle | null = null;
+  private timeStopRemaining: number = 0;
+  private timeStopTotal: number = TIME_STOP_DURATION;
 
   // 애니메이션 보조
   private hpTweens: Map<string, Phaser.Tweens.Tween> = new Map();
@@ -115,6 +153,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    // 우클릭 컨텍스트 메뉴 방지
+    this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
     const { width, height } = this.scale;
     this.add.rectangle(0, 0, width, height, BG_COLOR).setOrigin(0, 0);
 
@@ -131,10 +172,21 @@ export class GameScene extends Phaser.Scene {
     this.ballVisuals.clear();
     this.spawnVisuals.clear();
     this.reflectorVisuals.clear();
+    this.wallVisuals.clear();
     this.hpTweens.clear();
     this.endingBalls.clear();
     this.enemyZoneTiles.clear();
     this.hoverHighlight = null;
+    this.wallMode = false;
+    this.wallModeText = null;
+    this.wallCursor = null;
+    this.timeStopOverlay = null;
+    this.timeStopLabel = null;
+    this.timeStopGaugeBg = null;
+    this.timeStopGauge = null;
+    this.timeStopRemaining = 0;
+    this.itemCounts = { wall: [INITIAL_WALL_COUNT, INITIAL_WALL_COUNT], timeStop: [INITIAL_TIME_STOP_COUNT, INITIAL_TIME_STOP_COUNT] };
+    this.itemUiTexts = { wall: [null, null], timeStop: [null, null] };
     this.reflectorCountTexts = [null, null];
 
     this.drawGrid();
@@ -342,20 +394,50 @@ export class GameScene extends Phaser.Scene {
   private setupInput(): void {
     const size = this.mapData.size;
 
+    // 키보드: 1=성벽모드, 2=시간정지
+    this.input.keyboard?.on('keydown-ONE', () => this.toggleWallMode());
+    this.input.keyboard?.on('keydown-TWO', () => this.useTimeStop());
+
     this.input.on('pointerdown', (_pointer: Phaser.Input.Pointer) => {
       const localX = _pointer.x - this.gridOffsetX;
       const localY = _pointer.y - this.gridOffsetY;
       const gridX = Math.floor(localX / TILE_SIZE);
       const gridY = Math.floor(localY / TILE_SIZE);
 
-      if (gridX < 0 || gridX >= size || gridY < 0 || gridY >= size) return;
+      if (gridX < 0 || gridX >= size || gridY < 0 || gridY >= size) {
+        // 그리드 밖 클릭 시 성벽 모드 해제
+        if (this.wallMode && !_pointer.rightButtonDown()) this.setWallMode(false);
+        return;
+      }
 
       const tile = this.mapModel.getTile(gridX, gridY);
-      if (!tile || !tile.isReflectorSetable) return;
-      if (this.enemyZoneTiles.has(`${gridX},${gridY}`)) return;
-
       const key = `${gridX},${gridY}`;
       const existing = this.reflectorVisuals.get(key);
+
+      // 우클릭: 내 반사판 즉시 제거 (성벽 모드 해제도)
+      if (_pointer.rightButtonDown()) {
+        if (this.wallMode) {
+          this.setWallMode(false);
+          return;
+        }
+        if (existing && existing.playerId === this.myPlayerId) {
+          this.socket.removeReflector(gridX, gridY);
+        }
+        return;
+      }
+
+      // 성벽 모드: 빈 설치 가능 타일에 성벽 설치
+      if (this.wallMode) {
+        if (!tile || !tile.isReflectorSetable) return;
+        if (this.wallVisuals.has(key) || existing) return;
+        if (this.enemyZoneTiles.has(key)) return;
+        this.socket.placeWall(gridX, gridY);
+        this.setWallMode(false);
+        return;
+      }
+
+      if (!tile || !tile.isReflectorSetable) return;
+      if (this.enemyZoneTiles.has(`${gridX},${gridY}`)) return;
 
       if (!existing) {
         // 빈 타일 → Slash 설치
@@ -378,7 +460,7 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // 호버 이펙트 (빈 설치 가능 타일에만)
+    // 호버 이펙트 (성벽 모드 커서 포함)
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       const localX = pointer.x - this.gridOffsetX;
       const localY = pointer.y - this.gridOffsetY;
@@ -387,8 +469,24 @@ export class GameScene extends Phaser.Scene {
 
       if (gridX < 0 || gridX >= size || gridY < 0 || gridY >= size) {
         if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
+        if (this.wallCursor) this.wallCursor.setVisible(false);
         return;
       }
+
+      // 성벽 모드: 커서 표시
+      if (this.wallMode) {
+        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
+        const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+        const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+        if (!this.wallCursor) {
+          this.wallCursor = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, WALL_COLOR, 0.5);
+          this.tilesLayer.add(this.wallCursor);
+        }
+        this.wallCursor.setPosition(px, py).setVisible(true);
+        return;
+      }
+
+      if (this.wallCursor) this.wallCursor.setVisible(false);
 
       const tile = this.mapModel.getTile(gridX, gridY);
       const hasReflector = this.reflectorVisuals.has(`${gridX},${gridY}`);
@@ -410,29 +508,108 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private toggleWallMode(): void {
+    this.setWallMode(!this.wallMode);
+  }
+
+  private setWallMode(active: boolean): void {
+    if (active && this.itemCounts.wall[this.myPlayerId] <= 0) {
+      this.showToast('성벽 아이템이 없습니다.');
+      return;
+    }
+    this.wallMode = active;
+    if (this.wallModeText) {
+      this.wallModeText.setVisible(active);
+    }
+    if (!active && this.wallCursor) {
+      this.wallCursor.setVisible(false);
+    }
+  }
+
+  private useTimeStop(): void {
+    if (this.itemCounts.timeStop[this.myPlayerId] <= 0) {
+      this.showToast('시간 정지 아이템이 없습니다.');
+      return;
+    }
+    this.socket.useTimeStop();
+  }
+
   // === UI ===
 
   private setupUI(): void {
-    const { width } = this.scale;
+    const { width, height } = this.scale;
 
-    // 좌상단: 파란팀(P0) 반사판 수
+    // 좌상단: 파란팀(P0) 아이템 UI
     this.reflectorCountTexts[0] = this.add.text(
       8, 8,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
       { fontSize: '13px', color: '#4488ff', fontStyle: 'bold' },
     ).setOrigin(0, 0);
 
-    // 우상단: 빨간팀(P1) 반사판 수
+    this.itemUiTexts.wall[0] = this.add.text(
+      8, 26,
+      `🧱[1] ${INITIAL_WALL_COUNT}`,
+      { fontSize: '12px', color: '#ddaa44', fontStyle: 'bold' },
+    ).setOrigin(0, 0);
+
+    this.itemUiTexts.timeStop[0] = this.add.text(
+      8, 42,
+      `⏸[2] ${INITIAL_TIME_STOP_COUNT}`,
+      { fontSize: '12px', color: '#aa88ff', fontStyle: 'bold' },
+    ).setOrigin(0, 0);
+
+    // 우상단: 빨간팀(P1) 아이템 UI
     this.reflectorCountTexts[1] = this.add.text(
       width - 8, 8,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
       { fontSize: '13px', color: '#ff4444', fontStyle: 'bold' },
     ).setOrigin(1, 0);
 
-    this.add.text(width / 2, 8, '터치: / → \\ → 제거', {
+    this.itemUiTexts.wall[1] = this.add.text(
+      width - 8, 26,
+      `${INITIAL_WALL_COUNT} [1]🧱`,
+      { fontSize: '12px', color: '#ddaa44', fontStyle: 'bold' },
+    ).setOrigin(1, 0);
+
+    this.itemUiTexts.timeStop[1] = this.add.text(
+      width - 8, 42,
+      `${INITIAL_TIME_STOP_COUNT} [2]⏸`,
+      { fontSize: '12px', color: '#aa88ff', fontStyle: 'bold' },
+    ).setOrigin(1, 0);
+
+    this.add.text(width / 2, 8, '터치: / → \\ → 제거 | 우클릭: 제거', {
       fontSize: '10px',
       color: '#555566',
     }).setOrigin(0.5, 0);
+
+    // 성벽 모드 안내 텍스트
+    this.wallModeText = this.add.text(
+      width / 2, height / 2 - 120,
+      '🧱 성벽 설치 모드\n클릭: 설치 | 우클릭/ESC: 취소',
+      { fontSize: '14px', color: '#ddaa44', fontStyle: 'bold', align: 'center', backgroundColor: '#00000088', padding: { x: 10, y: 6 } },
+    ).setOrigin(0.5).setDepth(100).setVisible(false);
+
+    // 시간 정지 오버레이 (초기 숨김)
+    this.timeStopOverlay = this.add.rectangle(0, 0, width, height, 0x220044, TIME_STOP_OVERLAY_ALPHA)
+      .setOrigin(0, 0).setDepth(150).setVisible(false);
+    this.timeStopLabel = this.add.text(
+      width / 2, height / 2 - 30,
+      '⏸ 시간 정지 스킬',
+      { fontSize: '22px', color: '#cc88ff', fontStyle: 'bold' },
+    ).setOrigin(0.5).setDepth(151).setVisible(false);
+    this.timeStopGaugeBg = this.add.rectangle(
+      width / 2, height / 2 + 20,
+      300, 18, 0x333333,
+    ).setOrigin(0.5).setDepth(151).setVisible(false);
+    this.timeStopGauge = this.add.rectangle(
+      width / 2 - 150, height / 2 + 20,
+      300, 18, TIME_STOP_GAUGE_COLOR,
+    ).setOrigin(0, 0.5).setDepth(152).setVisible(false);
+
+    // ESC로 성벽 모드 해제
+    this.input.keyboard?.on('keydown-ESC', () => {
+      if (this.wallMode) this.setWallMode(false);
+    });
   }
 
   private updateReflectorCount(): void {
@@ -443,6 +620,23 @@ export class GameScene extends Phaser.Scene {
         .filter(v => v.playerId === pid).length;
       const remaining = MAX_REFLECTORS_PER_PLAYER - count;
       text.setText(`◆ ${remaining}/${MAX_REFLECTORS_PER_PLAYER}`);
+    }
+  }
+
+  private updateItemUI(): void {
+    for (let pid = 0; pid < 2; pid++) {
+      const wallText = this.itemUiTexts.wall[pid as 0|1];
+      const tsText = this.itemUiTexts.timeStop[pid as 0|1];
+      const wallCount = this.itemCounts.wall[pid as 0|1];
+      const tsCount = this.itemCounts.timeStop[pid as 0|1];
+
+      if (pid === 0) {
+        wallText?.setText(`🧱[1] ${wallCount}`).setAlpha(wallCount > 0 ? 1 : 0.4);
+        tsText?.setText(`⏸[2] ${tsCount}`).setAlpha(tsCount > 0 ? 1 : 0.4);
+      } else {
+        wallText?.setText(`${wallCount} [1]🧱`).setAlpha(wallCount > 0 ? 1 : 0.4);
+        tsText?.setText(`${tsCount} [2]⏸`).setAlpha(tsCount > 0 ? 1 : 0.4);
+      }
     }
   }
 
@@ -587,6 +781,32 @@ export class GameScene extends Phaser.Scene {
       });
     };
 
+    this.socket.onWallPlaced = (msg: WallPlacedMsg) => {
+      this.drawWall(msg.x, msg.y, msg.hp, msg.maxHp);
+      // 사용한 플레이어의 성벽 카운트 감소
+      this.itemCounts.wall[msg.playerId as 0|1] = Math.max(0, this.itemCounts.wall[msg.playerId as 0|1] - 1);
+      this.updateItemUI();
+    };
+
+    this.socket.onWallDamaged = (msg: WallDamagedMsg) => {
+      this.updateWallHp(msg.x, msg.y, msg.hp);
+    };
+
+    this.socket.onWallDestroyed = (msg: WallDestroyedMsg) => {
+      this.removeWallVisual(msg.x, msg.y);
+    };
+
+    this.socket.onTimeStopStarted = (msg: TimeStopStartedMsg) => {
+      // 사용한 플레이어의 시간 정지 카운트 감소
+      this.itemCounts.timeStop[msg.playerId as 0|1] = Math.max(0, this.itemCounts.timeStop[msg.playerId as 0|1] - 1);
+      this.updateItemUI();
+      this.showTimeStop(msg.duration);
+    };
+
+    this.socket.onTimeStopEnded = () => {
+      this.hideTimeStop();
+    };
+
     this.socket.onDisconnected = () => {
       this.add.text(
         this.scale.width / 2, this.scale.height / 2,
@@ -594,6 +814,103 @@ export class GameScene extends Phaser.Scene {
         { fontSize: '20px', color: '#ff4444' },
       ).setOrigin(0.5);
     };
+  }
+
+  private drawWall(gridX: number, gridY: number, hp: number, maxHp: number): void {
+    const key = `${gridX},${gridY}`;
+    const existing = this.wallVisuals.get(key);
+    if (existing) {
+      existing.bg.destroy();
+      existing.hpBarBg.destroy();
+      existing.hpBar.destroy();
+      existing.hpText.destroy();
+    }
+
+    const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+    const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+
+    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, WALL_COLOR, 0.85);
+    bg.setStrokeStyle(2, WALL_BORDER_COLOR, 1);
+    this.tilesLayer.add(bg);
+
+    const hpBarBg = this.add.rectangle(px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT, TILE_SIZE - 4, HP_BAR_HEIGHT, 0x333333);
+    this.tilesLayer.add(hpBarBg);
+
+    const ratio = hp / maxHp;
+    const hpBar = this.add.rectangle(
+      px - (TILE_SIZE - 4) / 2 * (1 - ratio),
+      py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
+      (TILE_SIZE - 4) * ratio, HP_BAR_HEIGHT, WALL_BORDER_COLOR,
+    );
+    this.tilesLayer.add(hpBar);
+
+    const hpText = this.add.text(px, py + 2, String(hp), {
+      fontSize: '12px', color: '#ffffff', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.tilesLayer.add(hpText);
+
+    this.wallVisuals.set(key, { bg, hpBar, hpBarBg, hpText, x: gridX, y: gridY, maxHp });
+  }
+
+  private updateWallHp(gridX: number, gridY: number, hp: number): void {
+    const key = `${gridX},${gridY}`;
+    const visual = this.wallVisuals.get(key);
+    if (!visual) return;
+
+    const ratio = hp / visual.maxHp;
+    const fullWidth = TILE_SIZE - 4;
+    visual.hpBar.setDisplaySize(fullWidth * ratio, HP_BAR_HEIGHT);
+    visual.hpBar.setX(visual.x * TILE_SIZE + TILE_SIZE / 2 - fullWidth / 2 * (1 - ratio));
+    visual.hpText.setText(String(hp));
+  }
+
+  private removeWallVisual(gridX: number, gridY: number): void {
+    const key = `${gridX},${gridY}`;
+    const visual = this.wallVisuals.get(key);
+    if (!visual) return;
+
+    // 파괴 애니메이션
+    this.tweens.add({
+      targets: [visual.bg, visual.hpBar, visual.hpBarBg, visual.hpText],
+      alpha: 0,
+      duration: 300,
+      onComplete: () => {
+        visual.bg.destroy();
+        visual.hpBar.destroy();
+        visual.hpBarBg.destroy();
+        visual.hpText.destroy();
+      },
+    });
+    this.wallVisuals.delete(key);
+  }
+
+  private showTimeStop(duration: number): void {
+    this.timeStopTotal = duration;
+    this.timeStopRemaining = duration;
+
+    this.timeStopOverlay?.setVisible(true);
+    this.timeStopLabel?.setVisible(true);
+    this.timeStopGaugeBg?.setVisible(true);
+    this.timeStopGauge?.setVisible(true);
+    if (this.timeStopGauge) this.timeStopGauge.scaleX = 1;
+
+    // 게이지 줄어드는 tween
+    if (this.timeStopGauge) {
+      this.tweens.add({
+        targets: this.timeStopGauge,
+        scaleX: 0,
+        duration: duration * 1000,
+        ease: 'Linear',
+      });
+    }
+  }
+
+  private hideTimeStop(): void {
+    this.timeStopOverlay?.setVisible(false);
+    this.timeStopLabel?.setVisible(false);
+    this.timeStopGaugeBg?.setVisible(false);
+    this.timeStopGauge?.setVisible(false);
+    if (this.timeStopGauge) this.tweens.killTweensOf(this.timeStopGauge);
   }
 
   private drawReflector(gridX: number, gridY: number, type: ReflectorType, playerId: number): void {

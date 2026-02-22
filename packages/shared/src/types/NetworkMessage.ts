@@ -19,6 +19,15 @@ export interface RemoveReflectorMsg {
   y: number;
 }
 
+export interface PlaceWallMsg {
+  x: number;
+  y: number;
+}
+
+export interface UseTimeStopMsg {
+  // 빈 payload
+}
+
 // ─── 서버 → 클라이언트 ───────────────────────────────────────────
 
 export interface SpawnPointInfo {
@@ -88,6 +97,34 @@ export interface GameOverMsg {
   winnerId: number;  // 0 또는 1, -1이면 무승부
 }
 
+export interface WallPlacedMsg {
+  playerId: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+}
+
+export interface WallDamagedMsg {
+  x: number;
+  y: number;
+  hp: number;
+}
+
+export interface WallDestroyedMsg {
+  x: number;
+  y: number;
+}
+
+export interface TimeStopStartedMsg {
+  playerId: number;
+  duration: number;
+}
+
+export interface TimeStopEndedMsg {
+  // 빈 payload
+}
+
 // ─── Socket.io 이벤트 이름 상수 ──────────────────────────────────
 
 export const SocketEvent = {
@@ -95,6 +132,8 @@ export const SocketEvent = {
   JOIN_QUEUE: 'join_queue',
   PLACE_REFLECTOR: 'place_reflector',
   REMOVE_REFLECTOR: 'remove_reflector',
+  PLACE_WALL: 'place_wall',
+  USE_TIME_STOP: 'use_time_stop',
 
   // S → C
   MATCH_FOUND: 'match_found',
@@ -106,4 +145,9 @@ export const SocketEvent = {
   BALL_MOVED: 'ball_moved',
   BALL_ENDED: 'ball_ended',
   GAME_OVER: 'game_over',
+  WALL_PLACED: 'wall_placed',
+  WALL_DAMAGED: 'wall_damaged',
+  WALL_DESTROYED: 'wall_destroyed',
+  TIME_STOP_STARTED: 'time_stop_started',
+  TIME_STOP_ENDED: 'time_stop_ended',
 } as const;

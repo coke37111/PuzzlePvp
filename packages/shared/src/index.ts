@@ -3,12 +3,13 @@ export { Direction } from './enums/Direction';
 export { TileType } from './enums/TileType';
 export { ReflectorType } from './enums/ReflectorType';
 export { EndReason } from './enums/EndReason';
+export { ItemType } from './enums/ItemType';
 
 // Core - types
 export type { TileData } from './core/TileData';
 export type { MapData, ReflectorPlacement } from './core/MapModel';
 export type { SimulationSummary, BallArrivedAtTileCallback } from './core/BallSimulator';
-export type { BattleConfig, SpawnEvent, BattleResult } from './core/BattleSimulator';
+export type { BattleConfig, SpawnEvent, BattleResult, WallState, ItemCounts, WallEvent, TimeStopEvent } from './core/BattleSimulator';
 
 // Core - values
 export { createTileData, EMPTY_TILE_INDEX } from './core/TileData';
@@ -25,9 +26,12 @@ export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
 // Types
 export type {
   JoinQueueMsg, PlaceReflectorMsg, RemoveReflectorMsg,
+  PlaceWallMsg, UseTimeStopMsg,
   SpawnPointInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg,
   ReflectorPlacedMsg, ReflectorRemovedMsg,
   BallSpawnedMsg, BallMovedMsg, BallEndedMsg, GameOverMsg,
+  WallPlacedMsg, WallDamagedMsg, WallDestroyedMsg,
+  TimeStopStartedMsg, TimeStopEndedMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

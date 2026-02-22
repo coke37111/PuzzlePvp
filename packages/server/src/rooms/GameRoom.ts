@@ -8,6 +8,7 @@ import {
   SocketEvent,
   PlaceReflectorMsg,
   RemoveReflectorMsg,
+  PlaceWallMsg,
   MatchFoundMsg,
   SpawnPointInfo,
   SpawnHpMsg,
@@ -18,6 +19,11 @@ import {
   BallMovedMsg,
   BallEndedMsg,
   GameOverMsg,
+  WallPlacedMsg,
+  WallDamagedMsg,
+  WallDestroyedMsg,
+  TimeStopStartedMsg,
+  TimeStopEndedMsg,
 } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
@@ -105,6 +111,37 @@ export class GameRoom {
       this.broadcast(SocketEvent.GAME_OVER, msg);
       this.stop();
     };
+
+    this.simulator.onWallPlaced = (event) => {
+      const msg: WallPlacedMsg = {
+        playerId: event.playerId,
+        x: event.x,
+        y: event.y,
+        hp: event.hp,
+        maxHp: event.maxHp,
+      };
+      this.broadcast(SocketEvent.WALL_PLACED, msg);
+    };
+
+    this.simulator.onWallDamaged = (event) => {
+      const msg: WallDamagedMsg = { x: event.x, y: event.y, hp: event.hp };
+      this.broadcast(SocketEvent.WALL_DAMAGED, msg);
+    };
+
+    this.simulator.onWallDestroyed = (x, y) => {
+      const msg: WallDestroyedMsg = { x, y };
+      this.broadcast(SocketEvent.WALL_DESTROYED, msg);
+    };
+
+    this.simulator.onTimeStopStarted = (event) => {
+      const msg: TimeStopStartedMsg = { playerId: event.playerId, duration: event.duration };
+      this.broadcast(SocketEvent.TIME_STOP_STARTED, msg);
+    };
+
+    this.simulator.onTimeStopEnded = () => {
+      const msg: TimeStopEndedMsg = {};
+      this.broadcast(SocketEvent.TIME_STOP_ENDED, msg);
+    };
   }
 
   start(): void {
@@ -152,6 +189,18 @@ export class GameRoom {
         this.simulator.removeReflector(playerId, msg.x, msg.y);
       });
 
+      socket.on(SocketEvent.PLACE_WALL, (msg: PlaceWallMsg) => {
+        console.log(`[GameRoom ${this.id}] P${playerId} 성벽 설치: (${msg.x},${msg.y})`);
+        const ok = this.simulator.placeWall(playerId, msg.x, msg.y);
+        console.log(`[GameRoom ${this.id}] 성벽 설치 결과: ${ok}`);
+      });
+
+      socket.on(SocketEvent.USE_TIME_STOP, () => {
+        console.log(`[GameRoom ${this.id}] P${playerId} 시간 정지 사용`);
+        const ok = this.simulator.useTimeStop(playerId);
+        console.log(`[GameRoom ${this.id}] 시간 정지 결과: ${ok}`);
+      });
+
       socket.on('disconnect', () => {
         if (!this.tickTimer) return;  // 이미 종료된 게임 무시
         console.log(`[GameRoom ${this.id}] 플레이어 ${playerId} 연결 끊김`);
@@ -186,6 +235,8 @@ export class GameRoom {
     for (const socket of this.players) {
       socket.removeAllListeners(SocketEvent.PLACE_REFLECTOR);
       socket.removeAllListeners(SocketEvent.REMOVE_REFLECTOR);
+      socket.removeAllListeners(SocketEvent.PLACE_WALL);
+      socket.removeAllListeners(SocketEvent.USE_TIME_STOP);
       socket.removeAllListeners('disconnect');
     }
 
