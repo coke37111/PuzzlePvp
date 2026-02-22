@@ -20,6 +20,7 @@ import {
   createBattleTileRegistry,
   MapModel,
   EMPTY_TILE_INDEX,
+  EndReason,
 } from '@puzzle-pvp/shared';
 
 import {
@@ -40,6 +41,7 @@ import { drawGridLines } from '../visual/GridRenderer';
 import {
   animBallSpawn,
   animBallEnd,
+  animBallCrash,
   animReflectorPlace,
   animHpBar,
   animDamageFlash,
@@ -51,6 +53,7 @@ import {
 interface BallVisual {
   circle: Phaser.GameObjects.Arc;
   glow: Phaser.GameObjects.Arc;
+  shine: Phaser.GameObjects.Arc;
   ballId: number;
   ownerId: number;
 }
@@ -675,23 +678,27 @@ export class GameScene extends Phaser.Scene {
       const px = msg.x * TILE_SIZE + TILE_SIZE / 2;
       const py = msg.y * TILE_SIZE + TILE_SIZE / 2;
 
-      // 글로우 (소유자 색상)
-      const glow = this.add.circle(px, py, BALL_RADIUS + GLOW_RADIUS_EXTRA, this.getTeamColor(msg.ownerId), GLOW_ALPHA);
+      // 글로우 (소유자 색상, 강화)
+      const glow = this.add.circle(px, py, BALL_RADIUS + 6, this.getTeamColor(msg.ownerId), 0.45);
       this.ballsLayer.add(glow);
 
-      // 공 (흰색)
-      const circle = this.add.circle(px, py, BALL_RADIUS, 0xffffff);
+      // 공 (팀 색상)
+      const circle = this.add.circle(px, py, BALL_RADIUS, this.getTeamColor(msg.ownerId));
       this.ballsLayer.add(circle);
 
+      // 광택 하이라이트
+      const shine = this.add.circle(px, py, 4, 0xffffff, 0.8);
+      this.ballsLayer.add(shine);
+
       const visual: BallVisual = {
-        circle, glow,
+        circle, glow, shine,
         ballId: msg.ballId,
         ownerId: msg.ownerId,
       };
       this.ballVisuals.set(msg.ballId, visual);
 
       // 스폰 애니메이션
-      animBallSpawn(this, [circle, glow]);
+      animBallSpawn(this, [circle, glow, shine]);
     };
 
     this.socket.onBallMoved = (msg: BallMovedMsg) => {
@@ -705,7 +712,7 @@ export class GameScene extends Phaser.Scene {
 
       // from→to를 timePerPhase 동안 클라이언트에서 자체 보간
       this.tweens.add({
-        targets: [visual.circle, visual.glow],
+        targets: [visual.circle, visual.glow, visual.shine],
         x: toX,
         y: toY,
         duration,
@@ -722,22 +729,37 @@ export class GameScene extends Phaser.Scene {
       // 진행 중인 이동 tween 중지
       this.tweens.killTweensOf(visual.circle);
       this.tweens.killTweensOf(visual.glow);
-      const color = this.getTeamColor(visual.ownerId);
+      this.tweens.killTweensOf(visual.shine);
 
-      animBallEnd(
-        this,
-        this.ballsLayer,
-        [visual.circle, visual.glow],
-        visual.circle.x,
-        visual.circle.y,
-        color,
-        () => {
-          visual.circle.destroy();
-          visual.glow.destroy();
-          this.ballVisuals.delete(msg.ballId);
-          this.endingBalls.delete(msg.ballId);
-        },
-      );
+      const onDestroy = () => {
+        visual.circle.destroy();
+        visual.glow.destroy();
+        visual.shine.destroy();
+        this.ballVisuals.delete(msg.ballId);
+        this.endingBalls.delete(msg.ballId);
+      };
+
+      if (msg.reason === EndReason.Crash) {
+        animBallCrash(
+          this,
+          this.ballsLayer,
+          [visual.circle, visual.glow, visual.shine],
+          visual.circle.x,
+          visual.circle.y,
+          onDestroy,
+        );
+      } else {
+        const color = this.getTeamColor(visual.ownerId);
+        animBallEnd(
+          this,
+          this.ballsLayer,
+          [visual.circle, visual.glow, visual.shine],
+          visual.circle.x,
+          visual.circle.y,
+          color,
+          onDestroy,
+        );
+      }
     };
 
     this.socket.onSpawnHp = (msg: SpawnHpMsg) => {

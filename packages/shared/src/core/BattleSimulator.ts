@@ -164,6 +164,9 @@ export class BattleSimulator {
       const sp = this.spawnPoints.find(s => s.tile.x === tile.x && s.tile.y === tile.y);
       if (!sp || !sp.active) return false;
 
+      // 아군 공은 아군 스폰포인트에 피해 없음
+      if (ball.ownerId === sp.ownerId) return true;
+
       sp.damage();
       if (!sp.active) {
         this.onSpawnDestroyed?.(sp.id);

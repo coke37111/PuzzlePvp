@@ -130,7 +130,10 @@ export class BallSimulator {
         this.updateNextTile(inst, currentPhase);
       }
 
-      // 2. 현재 타일 이벤트 처리
+      // 2. 충돌 감지 (적팀 공 소멸)
+      this.detectCrashes();
+
+      // 3. 현재 타일 이벤트 처리
       const newInstances: BallSimulationInstance[] = [];
       const processedSplit = new Set<number>();
       for (const inst of this.instances.filter(i => !i.isEnd)) {
@@ -139,7 +142,7 @@ export class BallSimulator {
         if (inst.currentTile.isSplit) processedSplit.add(inst.currentTile.index);
       }
 
-      // 3. 신규 공 추가
+      // 4. 신규 공 추가
       for (const ni of newInstances) {
         this.instances.push(ni);
         this.onBallCreated?.(ni.ball, ni.direction);
@@ -227,6 +230,7 @@ export class BallSimulator {
     if (inst.reserveTile !== undefined) {
       const hash = this.getReflectorHash();
       inst.history.addHistory(phase, inst.currentTile, inst.direction, hash);
+      inst.previousTile = inst.currentTile;
       inst.currentTile = inst.reserveTile;
 
       if (phase >= inst.reserveTilePhase) {
@@ -243,6 +247,7 @@ export class BallSimulator {
       return;
     }
 
+    inst.previousTile = inst.currentTile;
     inst.currentTile = nextTile!;
     const hash = this.getReflectorHash();
     inst.history.addHistory(phase, inst.currentTile, inst.direction, hash);
@@ -263,6 +268,48 @@ export class BallSimulator {
       if (reflType !== ReflectorType.None) {
         const newDir = BallSimulator.getReflectedDirection(inst.direction, reflType);
         inst.direction = newDir;
+      }
+    }
+  }
+
+  private detectCrashes(): void {
+    const active = this.instances.filter(i => !i.isEnd);
+
+    // 1. 교차 감지: A→B, B→A인 경우 쌍으로 소멸 (팀 무관)
+    for (let i = 0; i < active.length; i++) {
+      for (let j = i + 1; j < active.length; j++) {
+        const a = active[i], b = active[j];
+        if (a.isEnd || b.isEnd) continue;
+        if (
+          a.previousTile && b.previousTile &&
+          a.currentTile.index === b.previousTile.index &&
+          b.currentTile.index === a.previousTile.index
+        ) {
+          a.setEnd(EndReason.Crash);
+          b.setEnd(EndReason.Crash);
+          this.endReserved.push({ instance: a, tile: a.currentTile });
+          this.endReserved.push({ instance: b, tile: b.currentTile });
+        }
+      }
+    }
+
+    // 2. 같은 타일 2개 이상이면 쌍으로 소멸 (팀 무관)
+    const tileMap = new Map<number, BallSimulationInstance[]>();
+    for (const inst of active.filter(i => !i.isEnd)) {
+      const key = inst.currentTile.index;
+      if (!tileMap.has(key)) tileMap.set(key, []);
+      tileMap.get(key)!.push(inst);
+    }
+
+    for (const [, group] of tileMap) {
+      if (group.length < 2) continue;
+      const pairs = Math.floor(group.length / 2);
+      for (let k = 0; k < pairs; k++) {
+        const a = group[k * 2], b = group[k * 2 + 1];
+        a.setEnd(EndReason.Crash);
+        b.setEnd(EndReason.Crash);
+        this.endReserved.push({ instance: a, tile: a.currentTile });
+        this.endReserved.push({ instance: b, tile: b.currentTile });
       }
     }
   }
