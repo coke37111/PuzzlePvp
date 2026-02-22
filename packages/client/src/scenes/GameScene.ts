@@ -72,6 +72,7 @@ interface SpawnVisual {
 
 interface ReflectorVisual {
   graphics: Phaser.GameObjects.Graphics;
+  bg: Phaser.GameObjects.Rectangle;
   x: number;
   y: number;
   type: ReflectorType;
@@ -763,6 +764,14 @@ export class GameScene extends Phaser.Scene {
       if (visual) {
         visual.graphics.destroy();
         this.reflectorVisuals.delete(key);
+        // 팀색 배경: 1초에 걸쳐 페이드 아웃
+        const bg = visual.bg;
+        this.tweens.add({
+          targets: bg,
+          alpha: 0,
+          duration: 1000,
+          onComplete: () => bg.destroy(),
+        });
       }
       this.updateReflectorCount();
     };
@@ -920,12 +929,36 @@ export class GameScene extends Phaser.Scene {
   private drawReflector(gridX: number, gridY: number, type: ReflectorType, playerId: number): void {
     const key = `${gridX},${gridY}`;
     const existing = this.reflectorVisuals.get(key);
-    if (existing) existing.graphics.destroy();
+    if (existing) {
+      existing.graphics.destroy();
+      existing.bg.destroy();
+      this.tweens.killTweensOf(existing.bg);
+    }
 
     const px = gridX * TILE_SIZE;
     const py = gridY * TILE_SIZE;
     const m = 8;
     const color = this.getTeamColor(playerId);
+
+    const bg = this.add.rectangle(
+      px + TILE_SIZE / 2, py + TILE_SIZE / 2,
+      TILE_SIZE - 2, TILE_SIZE - 2,
+      color, 0.25,
+    );
+    this.tilesLayer.add(bg);
+
+    // 흰색 플래시: 신규 생성 알림
+    const flash = this.add.rectangle(
+      px + TILE_SIZE / 2, py + TILE_SIZE / 2,
+      TILE_SIZE - 2, TILE_SIZE - 2, 0xffffff, 0.7,
+    );
+    this.tilesLayer.add(flash);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 100,
+      onComplete: () => flash.destroy(),
+    });
 
     const g = this.add.graphics();
     g.lineStyle(3, color, 1);
@@ -942,6 +975,6 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.tilesLayer.add(g);
-    this.reflectorVisuals.set(key, { graphics: g, x: gridX, y: gridY, type, playerId });
+    this.reflectorVisuals.set(key, { graphics: g, bg, x: gridX, y: gridY, type, playerId });
   }
 }
