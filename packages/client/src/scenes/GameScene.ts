@@ -90,7 +90,7 @@ export class GameScene extends Phaser.Scene {
   private ballsLayer!: Phaser.GameObjects.Container;
   private uiLayer!: Phaser.GameObjects.Container;
 
-  private reflectorCountText: Phaser.GameObjects.Text | null = null;
+  private reflectorCountTexts: [Phaser.GameObjects.Text | null, Phaser.GameObjects.Text | null] = [null, null];
 
   // 애니메이션 보조
   private hpTweens: Map<string, Phaser.Tweens.Tween> = new Map();
@@ -135,7 +135,7 @@ export class GameScene extends Phaser.Scene {
     this.endingBalls.clear();
     this.enemyZoneTiles.clear();
     this.hoverHighlight = null;
-    this.reflectorCountText = null;
+    this.reflectorCountTexts = [null, null];
 
     this.drawGrid();
     this.setupInput();
@@ -413,32 +413,36 @@ export class GameScene extends Phaser.Scene {
   // === UI ===
 
   private setupUI(): void {
-    const { width, height } = this.scale;
+    const { width } = this.scale;
 
-    this.add.text(width / 2, height - 28, '터치: / → \\ → 제거', {
-      fontSize: '11px',
-      color: '#666688',
-    }).setOrigin(0.5);
-
-    this.reflectorCountText = this.add.text(
-      width / 2, height - 13,
+    // 좌상단: 파란팀(P0) 반사판 수
+    this.reflectorCountTexts[0] = this.add.text(
+      8, 8,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
-      { fontSize: '13px', color: '#aaaaff', fontStyle: 'bold' },
-    ).setOrigin(0.5);
+      { fontSize: '13px', color: '#4488ff', fontStyle: 'bold' },
+    ).setOrigin(0, 0);
+
+    // 우상단: 빨간팀(P1) 반사판 수
+    this.reflectorCountTexts[1] = this.add.text(
+      width - 8, 8,
+      `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
+      { fontSize: '13px', color: '#ff4444', fontStyle: 'bold' },
+    ).setOrigin(1, 0);
+
+    this.add.text(width / 2, 8, '터치: / → \\ → 제거', {
+      fontSize: '10px',
+      color: '#555566',
+    }).setOrigin(0.5, 0);
   }
 
   private updateReflectorCount(): void {
-    if (!this.reflectorCountText) return;
-    const myCount = [...this.reflectorVisuals.values()]
-      .filter(v => v.playerId === this.myPlayerId).length;
-    const remaining = MAX_REFLECTORS_PER_PLAYER - myCount;
-    this.reflectorCountText.setText(`◆ ${remaining}/${MAX_REFLECTORS_PER_PLAYER}`);
-    if (remaining === 0) {
-      this.reflectorCountText.setColor('#ff4444');
-    } else if (remaining <= 2) {
-      this.reflectorCountText.setColor('#cccc44');
-    } else {
-      this.reflectorCountText.setColor('#aaaaff');
+    for (let pid = 0; pid < 2; pid++) {
+      const text = this.reflectorCountTexts[pid];
+      if (!text) continue;
+      const count = [...this.reflectorVisuals.values()]
+        .filter(v => v.playerId === pid).length;
+      const remaining = MAX_REFLECTORS_PER_PLAYER - count;
+      text.setText(`◆ ${remaining}/${MAX_REFLECTORS_PER_PLAYER}`);
     }
   }
 
