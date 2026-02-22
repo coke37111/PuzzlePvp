@@ -194,9 +194,9 @@ export class GameScene extends Phaser.Scene {
     this.setupUI();
     this.setupSocketEvents();
 
-    this.add.text(width / 2, 8, `Player ${this.myPlayerId + 1} (${this.myPlayerId === 0 ? 'Blue' : 'Red'})`, {
+    this.add.text(width / 2, 8, `Player ${this.myPlayerId + 1} (Blue)`, {
       fontSize: '14px',
-      color: this.myPlayerId === 0 ? '#4488ff' : '#ff4444',
+      color: '#4488ff',
     }).setOrigin(0.5, 0);
   }
 
@@ -260,7 +260,7 @@ export class GameScene extends Phaser.Scene {
     // 모든 스폰포인트 주변을 표시 (적=설치불가, 아군=적 설치불가)
     for (const sp of this.serverSpawnPoints) {
       const isEnemy = sp.ownerId !== this.myPlayerId;
-      const color = PLAYER_COLORS[sp.ownerId];
+      const color = this.getTeamColor(sp.ownerId);
 
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -309,7 +309,7 @@ export class GameScene extends Phaser.Scene {
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
 
-    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, PLAYER_COLORS_DARK[ownerId], 0.4);
+    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, this.getTeamColorDark(ownerId), 0.4);
     this.tilesLayer.add(bg);
 
     // HP 바 배경
@@ -336,7 +336,7 @@ export class GameScene extends Phaser.Scene {
 
     // 발사 방향 화살표
     const dirArrow = this.add.graphics();
-    const arrowColor = PLAYER_COLORS[ownerId];
+    const arrowColor = this.getTeamColor(ownerId);
     dirArrow.fillStyle(arrowColor, 0.6);
 
     // tileIdx=2: 오른쪽 발사, tileIdx=3: 왼쪽 발사
@@ -381,7 +381,7 @@ export class GameScene extends Phaser.Scene {
 
     // HP 감소 시 데미지 플래시 + 팝업
     if (hp < oldHp) {
-      animDamageFlash(this, visual.bg, PLAYER_COLORS_DARK[visual.ownerId], 0.4);
+      animDamageFlash(this, visual.bg, this.getTeamColorDark(visual.ownerId), 0.4);
       const damage = oldHp - hp;
       const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       const popupY = visual.y * TILE_SIZE;
@@ -532,40 +532,41 @@ export class GameScene extends Phaser.Scene {
 
   private setupUI(): void {
     const { width, height } = this.scale;
+    const opponentId = 1 - this.myPlayerId;
 
-    // 좌상단: 파란팀(P0) 아이템 UI
-    this.reflectorCountTexts[0] = this.add.text(
+    // 좌상단: 내 팀 (항상 파란색)
+    this.reflectorCountTexts[this.myPlayerId] = this.add.text(
       8, 8,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
       { fontSize: '13px', color: '#4488ff', fontStyle: 'bold' },
     ).setOrigin(0, 0);
 
-    this.itemUiTexts.wall[0] = this.add.text(
+    this.itemUiTexts.wall[this.myPlayerId as 0|1] = this.add.text(
       8, 26,
       `🧱[1] ${INITIAL_WALL_COUNT}`,
       { fontSize: '12px', color: '#ddaa44', fontStyle: 'bold' },
     ).setOrigin(0, 0);
 
-    this.itemUiTexts.timeStop[0] = this.add.text(
+    this.itemUiTexts.timeStop[this.myPlayerId as 0|1] = this.add.text(
       8, 42,
       `⏸[2] ${INITIAL_TIME_STOP_COUNT}`,
       { fontSize: '12px', color: '#aa88ff', fontStyle: 'bold' },
     ).setOrigin(0, 0);
 
-    // 우상단: 빨간팀(P1) 아이템 UI
-    this.reflectorCountTexts[1] = this.add.text(
+    // 우상단: 상대 팀 (항상 빨간색)
+    this.reflectorCountTexts[opponentId] = this.add.text(
       width - 8, 8,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
       { fontSize: '13px', color: '#ff4444', fontStyle: 'bold' },
     ).setOrigin(1, 0);
 
-    this.itemUiTexts.wall[1] = this.add.text(
+    this.itemUiTexts.wall[opponentId as 0|1] = this.add.text(
       width - 8, 26,
       `${INITIAL_WALL_COUNT} [1]🧱`,
       { fontSize: '12px', color: '#ddaa44', fontStyle: 'bold' },
     ).setOrigin(1, 0);
 
-    this.itemUiTexts.timeStop[1] = this.add.text(
+    this.itemUiTexts.timeStop[opponentId as 0|1] = this.add.text(
       width - 8, 42,
       `${INITIAL_TIME_STOP_COUNT} [2]⏸`,
       { fontSize: '12px', color: '#aa88ff', fontStyle: 'bold' },
@@ -674,7 +675,7 @@ export class GameScene extends Phaser.Scene {
       const py = msg.y * TILE_SIZE + TILE_SIZE / 2;
 
       // 글로우 (소유자 색상)
-      const glow = this.add.circle(px, py, BALL_RADIUS + GLOW_RADIUS_EXTRA, PLAYER_COLORS[msg.ownerId], GLOW_ALPHA);
+      const glow = this.add.circle(px, py, BALL_RADIUS + GLOW_RADIUS_EXTRA, this.getTeamColor(msg.ownerId), GLOW_ALPHA);
       this.ballsLayer.add(glow);
 
       // 공 (흰색)
@@ -720,7 +721,7 @@ export class GameScene extends Phaser.Scene {
       // 진행 중인 이동 tween 중지
       this.tweens.killTweensOf(visual.circle);
       this.tweens.killTweensOf(visual.glow);
-      const color = PLAYER_COLORS[visual.ownerId];
+      const color = this.getTeamColor(visual.ownerId);
 
       animBallEnd(
         this,
@@ -752,7 +753,7 @@ export class GameScene extends Phaser.Scene {
 
     this.socket.onReflectorPlaced = (msg: ReflectorPlacedMsg) => {
       this.drawReflector(msg.x, msg.y, msg.type, msg.playerId);
-      animReflectorPlace(this, this.tilesLayer, msg.x, msg.y, PLAYER_COLORS[msg.playerId]);
+      animReflectorPlace(this, this.tilesLayer, msg.x, msg.y, this.getTeamColor(msg.playerId));
       this.updateReflectorCount();
     };
 
@@ -808,6 +809,15 @@ export class GameScene extends Phaser.Scene {
         { fontSize: '20px', color: '#ff4444' },
       ).setOrigin(0.5);
     };
+  }
+
+  /** 자기 팀은 항상 파란색, 상대는 빨간색으로 반환 */
+  private getTeamColor(playerId: number): number {
+    return PLAYER_COLORS[playerId === this.myPlayerId ? 0 : 1];
+  }
+
+  private getTeamColorDark(playerId: number): number {
+    return PLAYER_COLORS_DARK[playerId === this.myPlayerId ? 0 : 1];
   }
 
   private drawWall(gridX: number, gridY: number, hp: number, maxHp: number): void {
@@ -915,7 +925,7 @@ export class GameScene extends Phaser.Scene {
     const px = gridX * TILE_SIZE;
     const py = gridY * TILE_SIZE;
     const m = 8;
-    const color = PLAYER_COLORS[playerId];
+    const color = this.getTeamColor(playerId);
 
     const g = this.add.graphics();
     g.lineStyle(3, color, 1);
