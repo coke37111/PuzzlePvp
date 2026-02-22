@@ -1,4 +1,4 @@
-﻿# PuzzlePvP - 프로젝트 개요
+# PuzzlePvP - 프로젝트 개요
 
 ## 게임 소개
 
@@ -15,7 +15,7 @@ Classic1의 공+반사판 퍼즐 메카닉을 기반으로 한 **HTML5 1v1 실�
 | 요소 | 설명 |
 |------|------|
 | 공 발사 | 활성 출발점에서 자동 연속 발사 (기본 1초 간격) |
-| 반사판 | 플레이어당 5개 한도, FIFO 큐 방식 |
+| 반사판 | 플레이어당 5개 한도, 한도 초과 시 신규 설치 거부 |
 | 공유 보드 | 상대 반사판에 내 공이 반사됨 (공격/수비 겸용) |
 | 출발점 HP | 내 공 도착 → HP 회복 / 적 공 도착 → HP 감소 |
 | 출발점 파괴 | HP=0 → 비활성화, 공 생성 중단 |
@@ -47,13 +47,15 @@ PuzzlePvp/
 │   │       └── types/   # NetworkMessage, GameState
 │   ├── server/          # Node.js + Socket.io 게임 서버
 │   │   └── src/
-│   │       ├── rooms/   # GameRoom (게임 방 관리)
+│   │       ├── rooms/        # GameRoom (게임 방 관리)
 │   │       └── matchmaking/  # MatchmakingQueue
 │   └── client/          # Phaser.js 프론트엔드
 │       └── src/
 │           ├── scenes/  # MainMenu, Matchmaking, Game, Result
-│           └── network/ # SocketClient (싱글턴)
+│           ├── network/ # SocketClient (싱글턴)
+│           └── visual/  # Constants, GridRenderer, VisualEffects
 ├── Docs/                # 프로젝트 문서
+├── railway.json         # Railway 배포 설정
 ├── package.json         # npm workspaces monorepo
 ├── tsconfig.base.json   # 기본 TypeScript 설정
 └── CLAUDE.md            # AI 개발 가이드라인
@@ -77,7 +79,7 @@ client/ (shared 의존)
 
 | 파라미터 | 값 | 설명 |
 |----------|-----|------|
-| `timePerPhase` | 0.3초 | 공 한 칸 이동 시간 |
+| `timePerPhase` | 0.6초 | 공 한 칸 이동 시간 |
 | `spawnInterval` | 1.0초 | 출발점당 공 자동 발사 주기 |
 | `spawnMaxHp` | 5 | 출발점 최대 HP |
 | `maxReflectorsPerPlayer` | 5 | 플레이어당 반사판 최대 개수 |
@@ -105,7 +107,7 @@ P2 출발점: (10,2), (10,8) — 우측 (← 방향 발사)
 # 1. 의존성 설치
 npm install
 
-# 2. shared 패키지 빌드 (최초 1회)
+# 2. shared 패키지 빌드 (최초 1회 또는 shared 변경 시)
 npm run build:shared
 
 # 3. 서버 실행 (터미널 1)
@@ -115,6 +117,18 @@ npm run dev:server    # http://localhost:4000
 npm run dev:client    # http://localhost:5173
 
 # 5. 브라우저 탭 2개로 1v1 테스트
+```
+
+---
+
+## 배포
+
+Railway 단일 서비스로 클라이언트 + 서버 통합 배포.
+프로덕션 빌드 시 Express 서버가 Vite 빌드 결과물(정적 파일)도 서빙.
+
+```
+빌드 순서: shared → client (Vite) → server (tsc)
+시작:      NODE_ENV=production node packages/server/dist/index.js
 ```
 
 ---
@@ -131,6 +145,9 @@ npm run dev:client    # http://localhost:5173
 | `Core/Model/MapModel.cs` | `shared/core/MapModel.ts` |
 | `Core/Model/BallSimulator.cs` | `shared/core/BallSimulator.ts` |
 | `Core/Model/BallSimulationInstance.cs` | `shared/core/BallSimulationInstance.ts` |
+| `UI/InGameReflectorDisplay.cs` | `client/scenes/GameScene.ts` (반사판 카운트) |
+| `UI/MobDisplayUI.cs` | `client/visual/VisualEffects.ts` (HP 그래디언트, 데미지 팝업) |
+| `UI/ReflectorSelectPopup.cs` | `client/scenes/GameScene.ts` (반사판 선택 팝업) |
 | (신규) | `shared/core/SpawnPointModel.ts` |
 | (신규) | `shared/core/BattleSimulator.ts` |
 | (신규) | `shared/core/TileRegistry.ts` |

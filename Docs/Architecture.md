@@ -46,7 +46,7 @@ Classic1의 Core-UnityAdapter 패턴에서 영감을 받아, **shared 패키지�
 **TileModel** → 런타임 타일 (x, y 좌표, 고유 인덱스 = `x + y * 100`)
 **BallModel** → 공 (id, placementTile, ownerId)
 **SpawnPointModel** → 출발점 HP 시스템 (heal/damage, 활성/비활성)
-**MapModel** → 맵 데이터 + 반사판 관리 (배치/제거, FIFO 큐)
+**MapModel** → 맵 데이터 + 반사판 관리 (배치/제거, 소유자 검증)
 **TileRegistry** → 타일 데이터 레지스트리 + 기본 배틀 맵 생성
 
 ### 시뮬레이션 엔진
@@ -61,7 +61,8 @@ BattleSimulator (대전 시뮬레이터)
 ├── BallSimulator 확장
 ├── SpawnPointModel[] (출발점 HP)
 ├── 자동 공 발사 (spawnInterval)
-├── 반사판 FIFO 큐 관리
+├── 반사판 한도 관리 (초과 시 거부, 기존 위치 타입 변경 허용)
+├── 적 스폰존 보호 (설치 금지 영역)
 └── 승리 조건 판정
 ```
 
@@ -93,9 +94,10 @@ BattleSimulator (대전 시뮬레이터)
 
 ### 주요 클래스
 
-**index.ts** — Express + Socket.io 앱 (포트 4000)
+**index.ts** — Express + Socket.io 앱 (포트 환경변수 `PORT`, 기본 4000)
 - 헬스 체크: `GET /health`
 - CORS 전체 허용
+- 프로덕션: `client/dist` 정적 파일 서빙 (Express → Vite 빌드 결과물)
 - 연결 시 MatchmakingQueue에 등록
 
 **MatchmakingQueue** — FIFO 매칭
@@ -131,6 +133,31 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 ### SocketClient (싱글턴)
 
 서버와의 Socket.io 통신 관리. 콜백 기반 이벤트 처리.
+- 개발: `http://localhost:4000`
+- 프로덕션: `window.location.origin` (서버가 클라이언트도 서빙)
+
+### visual/ 패키지
+
+| 파일 | 역할 |
+|------|------|
+| `Constants.ts` | 타일 크기, 색상, HP 그라디언트 색상, 팝업 버튼 크기/간격, 애니메이션 타이밍 |
+| `GridRenderer.ts` | 그리드 타일 렌더링 (배경, 타일 색상, 스폰존 오버레이) |
+| `VisualEffects.ts` | HP 그라디언트 색상 계산, 대미지 팝업 애니메이션 |
+
+**HP 그라디언트**: HP 비율에 따라 초록(1.0) → 노랑(0.5) → 빨강(0.0)으로 선형 보간
+
+**대미지 팝업**: 스폰 포인트 타격 시 `-1` 텍스트가 위로 떠오르며 페이드 아웃
+
+### GameScene UI
+
+| 요소 | 설명 |
+|------|------|
+| 반사판 카운트 | `◆ N/5` 형식, 우상단 표시 |
+| 설치 팝업 | 타일 클릭 → 해당 타일 위치에 2×2 버튼 팝업 (X 버튼 중앙) |
+| 팝업 버튼 | TopLeft / TopRight / BottomLeft / BottomRight 반투명, 클릭으로 반사판 타입 선택 |
+| 스폰존 오버레이 | 플레이어별 색상으로 설치 금지 영역 표시 (내 구역 + 상대 구역 모두) |
+| HP 바 | 스폰 포인트 아래, HP 비율에 따라 색상 변경 |
+| 토스트 알림 | 반사판 한도 초과 시 하단 메시지 표시 |
 
 ### GameScene 렌더링 상수
 
@@ -140,6 +167,29 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 | `BALL_RADIUS` | 10px | 공 반경 |
 | P1 색상 | `0x4488ff` | 파랑 |
 | P2 색상 | `0xff4444` | 빨강 |
+| `HP_COLOR_HIGH` | `0x44cc44` | HP 만렙 (초록) |
+| `HP_COLOR_MID` | `0xcccc44` | HP 50% (노랑) |
+| `HP_COLOR_LOW` | `0xff2222` | HP 위험 (빨강) |
+
+---
+
+## 배포 아키텍처
+
+Railway 단일 서비스로 클라이언트 + 서버 통합 배포.
+
+```
+빌드: shared → client (Vite) → server (tsc)
+실행: NODE_ENV=production node packages/server/dist/index.js
+
+HTTP 요청 흐름:
+  GET /health          → Express 헬스 체크
+  WS  /socket.io/...   → Socket.io 게임 서버
+  GET /*               → Express → client/dist/index.html (SPA)
+```
+
+**환경 변수**:
+- `PORT`: 서버 포트 (Railway 자동 주입, 로컬 기본값 4000)
+- `NODE_ENV`: `production` 시 정적 파일 서빙 활성화
 
 ---
 
@@ -149,7 +199,7 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 
 ```typescript
 update(deltaTime):
-  phaseRate += deltaTime / timePerPhase  // 기본 0.3초
+  phaseRate += deltaTime / timePerPhase  // 기본 0.6초
   currentPhase = floor(phaseRate)
 
   매 phase마다:

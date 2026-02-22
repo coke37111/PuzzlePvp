@@ -10,10 +10,8 @@ export const TILE_INDEX = {
   START_LEFT: 3,    // 왼쪽으로 발사하는 스타트 (P2용)
   GOAL: 4,
   BLOCK: 7,
-  FIXED_TOPLEFT: 10,
-  FIXED_TOPRIGHT: 11,
-  FIXED_BOTTOMLEFT: 12,
-  FIXED_BOTTOMRIGHT: 13,
+  FIXED_SLASH: 10,
+  FIXED_BACKSLASH: 11,
   PORTAL_A: 20,
   PORTAL_B: 21,
 } as const;
@@ -59,35 +57,19 @@ export function createBattleTileRegistry(): Map<number, TileData> {
     isPassable: false,
   }));
 
-  // 고정 반사판 4종
-  registry.set(TILE_INDEX.FIXED_TOPLEFT, createTileData({
-    uniqueIndex: TILE_INDEX.FIXED_TOPLEFT,
+  // 고정 반사판 2종
+  registry.set(TILE_INDEX.FIXED_SLASH, createTileData({
+    uniqueIndex: TILE_INDEX.FIXED_SLASH,
     tileType: TileType.FixedReflector,
-    reflectorType: ReflectorType.TopLeft,
+    reflectorType: ReflectorType.Slash,
     isReflectorSetable: false,
     isPassable: true,
   }));
 
-  registry.set(TILE_INDEX.FIXED_TOPRIGHT, createTileData({
-    uniqueIndex: TILE_INDEX.FIXED_TOPRIGHT,
+  registry.set(TILE_INDEX.FIXED_BACKSLASH, createTileData({
+    uniqueIndex: TILE_INDEX.FIXED_BACKSLASH,
     tileType: TileType.FixedReflector,
-    reflectorType: ReflectorType.TopRight,
-    isReflectorSetable: false,
-    isPassable: true,
-  }));
-
-  registry.set(TILE_INDEX.FIXED_BOTTOMLEFT, createTileData({
-    uniqueIndex: TILE_INDEX.FIXED_BOTTOMLEFT,
-    tileType: TileType.FixedReflector,
-    reflectorType: ReflectorType.BottomLeft,
-    isReflectorSetable: false,
-    isPassable: true,
-  }));
-
-  registry.set(TILE_INDEX.FIXED_BOTTOMRIGHT, createTileData({
-    uniqueIndex: TILE_INDEX.FIXED_BOTTOMRIGHT,
-    tileType: TileType.FixedReflector,
-    reflectorType: ReflectorType.BottomRight,
+    reflectorType: ReflectorType.Backslash,
     isReflectorSetable: false,
     isPassable: true,
   }));

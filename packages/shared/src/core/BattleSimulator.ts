@@ -15,7 +15,7 @@ export interface BattleConfig {
 }
 
 export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
-  spawnInterval: 1.0,
+  spawnInterval: 0.2,
   timePerPhase: 0.6,
   maxReflectorsPerPlayer: 5,
   spawnHp: 5,

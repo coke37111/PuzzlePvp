@@ -18,7 +18,6 @@ export type BallMovedCallback = (ball: BallModel, from: TileModel, to: TileModel
 export type BallEndedCallback = (ball: BallModel, tile: TileModel, reason: EndReason) => void;
 export type BallGoalInCallback = (ball: BallModel, tile: TileModel) => void;
 export type SimulationEndCallback = (summary: SimulationSummary) => void;
-export type BallCrashCallback = (balls: BallModel[], tile: TileModel) => void;
 /** 공이 타일에 도착할 때마다 호출. true 반환 시 공을 캡처(종료)함 */
 export type BallArrivedAtTileCallback = (ball: BallModel, tile: TileModel) => boolean;
 
@@ -44,7 +43,6 @@ export class BallSimulator {
   onBallMoved?: BallMovedCallback;
   onBallEnded?: BallEndedCallback;
   onGoalIn?: BallGoalInCallback;
-  onBallCrash?: BallCrashCallback;
   onBallArrivedAtTile?: BallArrivedAtTileCallback;
   onEnd?: SimulationEndCallback;
   onPhaseAdvanced?: (phase: number) => void;
@@ -141,10 +139,7 @@ export class BallSimulator {
         if (inst.currentTile.isSplit) processedSplit.add(inst.currentTile.index);
       }
 
-      // 3. 충돌 감지
-      this.checkCollisions();
-
-      // 4. 신규 공 추가
+      // 3. 신규 공 추가
       for (const ni of newInstances) {
         this.instances.push(ni);
         this.onBallCreated?.(ni.ball, ni.direction);
@@ -176,12 +171,6 @@ export class BallSimulator {
         this.onBallEnded?.(instance.ball, tile, instance.endReason);
       }
       this.endReserved = [];
-    }
-
-    // 루프 감지
-    for (const inst of this.instances.filter(i => i.isLoop && !i.isEnd)) {
-      inst.setEnd(EndReason.Loop);
-      this.onBallEnded?.(inst.ball, inst.currentTile, EndReason.Loop);
     }
 
     // 모든 공 종료 체크
@@ -329,56 +318,6 @@ export class BallSimulator {
     }
   }
 
-  private checkCollisions(): void {
-    const active = this.instances.filter(
-      i => !i.isEnd && i.isMoving && !this.endReserved.some(e => e.instance === i),
-    );
-
-    const withNext = active.map(inst => ({
-      inst,
-      next: this.findNearTile(inst.currentTile, inst.direction),
-    })).filter(x => x.next !== undefined);
-
-    // 교차 충돌 (서로 위치를 바꾸는 경우)
-    for (let i = 0; i < withNext.length; i++) {
-      for (let j = i + 1; j < withNext.length; j++) {
-        const a = withNext[i];
-        const b = withNext[j];
-        if (a.inst.isEnd || b.inst.isEnd) continue;
-
-        if (
-          a.inst.currentTile.x === b.next!.x && a.inst.currentTile.y === b.next!.y &&
-          b.inst.currentTile.x === a.next!.x && b.inst.currentTile.y === a.next!.y
-        ) {
-          a.inst.setEnd(EndReason.Crash);
-          b.inst.setEnd(EndReason.Crash);
-          this.endReserved.push({ instance: a.inst, tile: a.inst.currentTile });
-          this.endReserved.push({ instance: b.inst, tile: b.inst.currentTile });
-        }
-      }
-    }
-
-    // 같은 타일로 향하는 충돌
-    const nextTileGroups = new Map<number, typeof withNext>();
-    for (const item of withNext.filter(x => !x.inst.isEnd && !this.endReserved.some(e => e.instance === x.inst))) {
-      const key = item.next!.index;
-      if (!nextTileGroups.has(key)) nextTileGroups.set(key, []);
-      nextTileGroups.get(key)!.push(item);
-    }
-
-    for (const [, group] of nextTileGroups) {
-      if (group.length <= 1) continue;
-      if (group[0].next!.isGoal) continue;  // 골 타일은 충돌 없음
-
-      const balls = group.map(g => g.inst.ball);
-      this.onBallCrash?.(balls, group[0].next!);
-      for (const { inst } of group) {
-        inst.setEnd(EndReason.Crash);
-        this.endReserved.push({ instance: inst, tile: group[0].next! });
-      }
-    }
-  }
-
   findNearTile(tile: TileModel, direction: Direction): TileModel | undefined {
     switch (direction) {
       case Direction.Up: return this.map.getTile(tile.x, tile.y - 1);
@@ -389,16 +328,9 @@ export class BallSimulator {
     }
   }
 
-  private checkPassable(tile: TileModel | undefined, inDir: Direction): boolean {
+  private checkPassable(tile: TileModel | undefined, _inDir: Direction): boolean {
     if (!tile || tile.isBlock) return false;
-
-    const rType = this.getReflectorType(tile);
-    if (inDir === Direction.Right && (rType === ReflectorType.TopLeft || rType === ReflectorType.BottomLeft)) return false;
-    if (inDir === Direction.Left && (rType === ReflectorType.TopRight || rType === ReflectorType.BottomRight)) return false;
-    if (inDir === Direction.Up && (rType === ReflectorType.BottomLeft || rType === ReflectorType.BottomRight)) return false;
-    if (inDir === Direction.Down && (rType === ReflectorType.TopLeft || rType === ReflectorType.TopRight)) return false;
-
-    return true;
+    return true;  // 거울은 모든 방향에서 통과 (양방향 반사)
   }
 
   private getReflectorType(tile: TileModel): ReflectorType {
@@ -416,21 +348,19 @@ export class BallSimulator {
 
   static getReflectedDirection(dir: Direction, reflector: ReflectorType): Direction {
     switch (reflector) {
-      case ReflectorType.TopLeft:
+      case ReflectorType.Slash:
+        // "/" 거울: Up↔Right, Down↔Left
         if (dir === Direction.Up) return Direction.Right;
+        if (dir === Direction.Right) return Direction.Up;
+        if (dir === Direction.Down) return Direction.Left;
         if (dir === Direction.Left) return Direction.Down;
         return dir;
-      case ReflectorType.TopRight:
+      case ReflectorType.Backslash:
+        // "\" 거울: Up↔Left, Down↔Right
         if (dir === Direction.Up) return Direction.Left;
-        if (dir === Direction.Right) return Direction.Down;
-        return dir;
-      case ReflectorType.BottomLeft:
-        if (dir === Direction.Down) return Direction.Right;
         if (dir === Direction.Left) return Direction.Up;
-        return dir;
-      case ReflectorType.BottomRight:
-        if (dir === Direction.Down) return Direction.Left;
-        if (dir === Direction.Right) return Direction.Up;
+        if (dir === Direction.Down) return Direction.Right;
+        if (dir === Direction.Right) return Direction.Down;
         return dir;
       default:
         return dir;

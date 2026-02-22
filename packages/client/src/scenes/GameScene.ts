@@ -27,7 +27,6 @@ import {
   HOVER_COLOR, HOVER_ALPHA,
   GLOW_RADIUS_EXTRA, GLOW_ALPHA,
   ENEMY_ZONE_ALPHA,
-  POPUP_BTN_SIZE, POPUP_BTN_GAP, POPUP_ANIM_OPEN, POPUP_ANIM_CLOSE,
   MAX_REFLECTORS_PER_PLAYER,
 } from '../visual/Constants';
 import { drawGridLines } from '../visual/GridRenderer';
@@ -91,10 +90,6 @@ export class GameScene extends Phaser.Scene {
   private ballsLayer!: Phaser.GameObjects.Container;
   private uiLayer!: Phaser.GameObjects.Container;
 
-  // 반사판 선택 팝업
-  private popupContainer: Phaser.GameObjects.Container | null = null;
-  private popupGridX: number = -1;
-  private popupGridY: number = -1;
   private reflectorCountText: Phaser.GameObjects.Text | null = null;
 
   // 애니메이션 보조
@@ -140,7 +135,6 @@ export class GameScene extends Phaser.Scene {
     this.endingBalls.clear();
     this.enemyZoneTiles.clear();
     this.hoverHighlight = null;
-    this.popupContainer = null;
     this.reflectorCountText = null;
 
     this.drawGrid();
@@ -158,8 +152,6 @@ export class GameScene extends Phaser.Scene {
   shutdown(): void {
     this.tweens.killAll();
     this.time.removeAllEvents();
-    this.popupContainer?.destroy();
-    this.popupContainer = null;
   }
 
   // === 그리드 그리기 ===
@@ -356,48 +348,38 @@ export class GameScene extends Phaser.Scene {
       const gridX = Math.floor(localX / TILE_SIZE);
       const gridY = Math.floor(localY / TILE_SIZE);
 
-      // 그리드 밖
-      if (gridX < 0 || gridX >= size || gridY < 0 || gridY >= size) {
-        this.closeReflectorPopup();
-        return;
-      }
-
-      // 같은 타일 다시 클릭 → 팝업 닫기
-      if (this.popupContainer && this.popupGridX === gridX && this.popupGridY === gridY) {
-        this.closeReflectorPopup();
-        return;
-      }
+      if (gridX < 0 || gridX >= size || gridY < 0 || gridY >= size) return;
 
       const tile = this.mapModel.getTile(gridX, gridY);
-      if (!tile || !tile.isReflectorSetable) {
-        this.closeReflectorPopup();
-        return;
-      }
+      if (!tile || !tile.isReflectorSetable) return;
+      if (this.enemyZoneTiles.has(`${gridX},${gridY}`)) return;
 
-      if (this.enemyZoneTiles.has(`${gridX},${gridY}`)) {
-        this.closeReflectorPopup();
-        return;
-      }
+      const key = `${gridX},${gridY}`;
+      const existing = this.reflectorVisuals.get(key);
 
-      // 반사판 없는 타일인데 내 한도가 꽉 찼으면 토스트
-      const tileHasReflector = this.reflectorVisuals.has(`${gridX},${gridY}`);
-      const myCount = [...this.reflectorVisuals.values()]
-        .filter(v => v.playerId === this.myPlayerId).length;
-      if (!tileHasReflector && myCount >= MAX_REFLECTORS_PER_PLAYER) {
-        this.showToast('반사판이 없습니다. 기존 반사판을 제거 후 설치하세요.');
+      if (!existing) {
+        // 빈 타일 → Slash 설치
+        const myCount = [...this.reflectorVisuals.values()]
+          .filter(v => v.playerId === this.myPlayerId).length;
+        if (myCount >= MAX_REFLECTORS_PER_PLAYER) {
+          this.showToast('반사판 한도 초과. 기존 반사판을 먼저 제거하세요.');
+          return;
+        }
+        this.socket.placeReflector(gridX, gridY, ReflectorType.Slash);
+      } else if (existing.playerId !== this.myPlayerId) {
+        // 상대 반사판 → 무시
         return;
+      } else if (existing.type === ReflectorType.Slash) {
+        // Slash → Backslash
+        this.socket.placeReflector(gridX, gridY, ReflectorType.Backslash);
+      } else {
+        // Backslash → 제거
+        this.socket.removeReflector(gridX, gridY);
       }
-
-      this.openReflectorPopup(gridX, gridY);
     });
 
-    // 호버 이펙트
+    // 호버 이펙트 (빈 설치 가능 타일에만)
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (this.popupContainer) {
-        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
-        return;
-      }
-
       const localX = pointer.x - this.gridOffsetX;
       const localY = pointer.y - this.gridOffsetY;
       const gridX = Math.floor(localX / TILE_SIZE);
@@ -433,7 +415,7 @@ export class GameScene extends Phaser.Scene {
   private setupUI(): void {
     const { width, height } = this.scale;
 
-    this.add.text(width / 2, height - 28, '타일을 클릭해 반사판을 설치하세요', {
+    this.add.text(width / 2, height - 28, '터치: / → \\ → 제거', {
       fontSize: '11px',
       color: '#666688',
     }).setOrigin(0.5);
@@ -460,125 +442,6 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private openReflectorPopup(gridX: number, gridY: number): void {
-    this.closeReflectorPopup();
-
-    const worldX = gridX * TILE_SIZE + TILE_SIZE / 2 + this.gridOffsetX;
-    const tileCenterY = gridY * TILE_SIZE + TILE_SIZE / 2 + this.gridOffsetY;
-
-    const hasReflector = this.reflectorVisuals.has(`${gridX},${gridY}`);
-
-    // step: 버튼 크기 + 간격, half: 그 절반
-    const step = POPUP_BTN_SIZE + POPUP_BTN_GAP;  // 42
-    const half = step / 2;                          // 21
-
-    // 레이아웃:
-    //   반사판 있음 → [TL][TR] / [X] / [BL][BR]  (X가 2x2 중앙)
-    //   반사판 없음 → [TL][TR] / [BL][BR]
-    const popupW = 2 * step - POPUP_BTN_GAP + 16;
-    const popupH = (hasReflector ? 3 : 2) * step - POPUP_BTN_GAP + 16;
-
-    const { width, height } = this.scale;
-    let px = worldX;
-    let py = tileCenterY;
-    px = Math.max(popupW / 2 + 4, Math.min(width - popupW / 2 - 4, px));
-    py = Math.max(popupH / 2 + 4, Math.min(height - popupH / 2 - 4, py));
-
-    const container = this.add.container(px, py);
-    container.setDepth(100);
-
-    const bgRect = this.add.rectangle(0, 0, popupW, popupH, 0x1a1a2e, 0.6);
-    bgRect.setStrokeStyle(1, 0x5555aa, 0.5);
-    container.add(bgRect);
-
-    // 2x2 반사판 버튼:
-    //   hasReflector: 행0 by=-step, 행1 by=+step  (X가 by=0으로 사이에 삽입)
-    //   !hasReflector: 행0 by=-half, 행1 by=+half
-    const types2x2 = [
-      [ReflectorType.TopLeft,    ReflectorType.TopRight],
-      [ReflectorType.BottomLeft, ReflectorType.BottomRight],
-    ];
-
-    for (let row = 0; row < 2; row++) {
-      for (let col = 0; col < 2; col++) {
-        const type = types2x2[row][col];
-        const bx = col === 0 ? -half : half;
-        const by = hasReflector
-          ? (row === 0 ? -step : step)
-          : (row === 0 ? -half : half);
-
-        const btnBg = this.add.rectangle(bx, by, POPUP_BTN_SIZE, POPUP_BTN_SIZE, 0x2a2a4a, 0.6)
-          .setInteractive({ useHandCursor: true });
-        const icon = this.drawReflectorIcon(bx, by, POPUP_BTN_SIZE, type, 0xccccff);
-
-        btnBg.on('pointerover', () => btnBg.setFillStyle(0x4444aa, 0.8));
-        btnBg.on('pointerout', () => btnBg.setFillStyle(0x2a2a4a, 0.6));
-        btnBg.on(
-          'pointerdown',
-          (_p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
-            ev.stopPropagation();
-            this.socket.placeReflector(gridX, gridY, type);
-            this.closeReflectorPopup();
-          },
-        );
-
-        container.add([btnBg, icon]);
-      }
-    }
-
-    // X 삭제 버튼 — 반사판 있을 때만, 2x2 사이 중앙(by=0)
-    if (hasReflector) {
-      const removeBg = this.add.rectangle(0, 0, POPUP_BTN_SIZE, POPUP_BTN_SIZE, 0x2a2a4a, 0.6)
-        .setInteractive({ useHandCursor: true });
-
-      const rg = this.add.graphics();
-      const m = POPUP_BTN_SIZE * 0.28;
-      rg.lineStyle(2, 0xff6666, 1);
-      rg.lineBetween(-m, -m, m, m);
-      rg.lineBetween(m, -m, -m, m);
-
-      removeBg.on('pointerover', () => removeBg.setFillStyle(0xaa2222, 0.8));
-      removeBg.on('pointerout', () => removeBg.setFillStyle(0x2a2a4a, 0.6));
-      removeBg.on(
-        'pointerdown',
-        (_p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
-          ev.stopPropagation();
-          this.socket.removeReflector(gridX, gridY);
-          this.closeReflectorPopup();
-        },
-      );
-
-      container.add([removeBg, rg]);
-    }
-
-    container.setScale(0);
-    this.tweens.add({
-      targets: container,
-      scaleX: 1, scaleY: 1,
-      duration: POPUP_ANIM_OPEN,
-      ease: 'Back.easeOut',
-    });
-
-    this.popupContainer = container;
-    this.popupGridX = gridX;
-    this.popupGridY = gridY;
-  }
-
-  private closeReflectorPopup(): void {
-    if (!this.popupContainer) return;
-    const container = this.popupContainer;
-    this.popupContainer = null;
-    this.popupGridX = -1;
-    this.popupGridY = -1;
-    this.tweens.add({
-      targets: container,
-      scaleX: 0, scaleY: 0,
-      duration: POPUP_ANIM_CLOSE,
-      ease: 'Quad.easeIn',
-      onComplete: () => container.destroy(),
-    });
-  }
-
   private showToast(message: string): void {
     const { width, height } = this.scale;
     const toast = this.add.text(width / 2, height - 50, message, {
@@ -603,42 +466,6 @@ export class GameScene extends Phaser.Scene {
         });
       },
     });
-  }
-
-  private drawReflectorIcon(
-    cx: number, cy: number, size: number,
-    type: ReflectorType, color: number,
-  ): Phaser.GameObjects.Graphics {
-    const g = this.add.graphics();
-    const m = size * 0.22;
-    const left = cx - size / 2 + m;
-    const right = cx + size / 2 - m;
-    const top = cy - size / 2 + m;
-    const bottom = cy + size / 2 - m;
-
-    g.lineStyle(3, color, 1);
-    g.fillStyle(color, 1);
-
-    switch (type) {
-      case ReflectorType.TopLeft:
-        g.lineBetween(left, bottom, right, top);
-        g.fillCircle(left, top, 3);
-        break;
-      case ReflectorType.TopRight:
-        g.lineBetween(left, top, right, bottom);
-        g.fillCircle(right, top, 3);
-        break;
-      case ReflectorType.BottomLeft:
-        g.lineBetween(left, top, right, bottom);
-        g.fillCircle(left, bottom, 3);
-        break;
-      case ReflectorType.BottomRight:
-        g.lineBetween(left, bottom, right, top);
-        g.fillCircle(right, bottom, 3);
-        break;
-    }
-
-    return g;
   }
 
   // === 소켓 이벤트 ===
@@ -779,25 +606,13 @@ export class GameScene extends Phaser.Scene {
     g.lineStyle(3, color, 1);
 
     switch (type) {
-      case ReflectorType.TopLeft:
+      case ReflectorType.Slash:
+        // "/" 대각선: 왼쪽 아래 → 오른쪽 위
         g.lineBetween(px + m, py + TILE_SIZE - m, px + TILE_SIZE - m, py + m);
-        g.fillStyle(color, 1);
-        g.fillCircle(px + m, py + m, 4);
         break;
-      case ReflectorType.TopRight:
+      case ReflectorType.Backslash:
+        // "\" 대각선: 왼쪽 위 → 오른쪽 아래
         g.lineBetween(px + m, py + m, px + TILE_SIZE - m, py + TILE_SIZE - m);
-        g.fillStyle(color, 1);
-        g.fillCircle(px + TILE_SIZE - m, py + m, 4);
-        break;
-      case ReflectorType.BottomLeft:
-        g.lineBetween(px + m, py + m, px + TILE_SIZE - m, py + TILE_SIZE - m);
-        g.fillStyle(color, 1);
-        g.fillCircle(px + m, py + TILE_SIZE - m, 4);
-        break;
-      case ReflectorType.BottomRight:
-        g.lineBetween(px + m, py + TILE_SIZE - m, px + TILE_SIZE - m, py + m);
-        g.fillStyle(color, 1);
-        g.fillCircle(px + TILE_SIZE - m, py + TILE_SIZE - m, 4);
         break;
     }
 
