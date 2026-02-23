@@ -45,6 +45,7 @@ import {
   SPAWN_GAUGE_HEIGHT, SPAWN_GAUGE_COLOR,
 } from '../visual/Constants';
 import { drawGridLines } from '../visual/GridRenderer';
+import { SoundManager } from '../visual/SoundManager';
 import {
   animBallSpawn,
   animBallEnd,
@@ -191,6 +192,7 @@ export class GameScene extends Phaser.Scene {
   private reflectorCooldownTween: Phaser.Tweens.Tween | null = null;
   private reflectorSlotOrigXs: number[] = [];
   private shakeInProgress: boolean = false;
+  private sfx!: SoundManager;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -263,6 +265,8 @@ export class GameScene extends Phaser.Scene {
     this.itemSlotWallText = null;
     this.itemSlotTsBg = null;
     this.itemSlotTsText = null;
+
+    this.sfx = new SoundManager();
 
     this.drawGrid();
     this.createReflectorStockUI();
@@ -451,6 +455,7 @@ export class GameScene extends Phaser.Scene {
   private shakeReflectorStockWarning(): void {
     if (this.shakeInProgress) return; // 이미 흔드는 중이면 무시
     this.shakeInProgress = true;
+    this.sfx.stockWarning();
 
     // 붉은색으로 전환
     for (const bg of this.reflectorSlotBgs) bg.setFillStyle(0xaa2222, 0.7);
@@ -698,6 +703,7 @@ export class GameScene extends Phaser.Scene {
     animHpBar(this, visual.hpBar, baseX, ratio, `core_hp_${coreId}`, this.hpTweens);
 
     if (hp < oldHp) {
+      this.sfx.coreHit();
       animDamageFlash(this, visual.bg, this.getTeamColorDark(visual.ownerId), 0.7);
       const damage = oldHp - hp;
       const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
@@ -762,6 +768,11 @@ export class GameScene extends Phaser.Scene {
 
     // HP 감소 시 데미지 플래시 + 팝업
     if (hp < oldHp) {
+      if (visual.ownerId === this.myPlayerId) {
+        this.sfx.spawnHitMine();
+      } else {
+        this.sfx.spawnHitEnemy();
+      }
       animDamageFlash(this, visual.bg, this.getTeamColorDark(visual.ownerId), 0.4);
       const damage = oldHp - hp;
       const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
@@ -1170,6 +1181,7 @@ export class GameScene extends Phaser.Scene {
       // 페이즈가 바뀌는 첫 공 → 즉시 진동 (게이지 완료 타이밍)
       if (msg.phaseNumber !== this.phaseCount) {
         this.phaseCount = msg.phaseNumber;
+        this.sfx.phaseChange();
         this.shakeBoard();
       }
 
@@ -1225,6 +1237,7 @@ export class GameScene extends Phaser.Scene {
       if (this.endingBalls.has(msg.ballId)) return;
 
       this.endingBalls.add(msg.ballId);
+      this.sfx.ballEnd();
       // 진행 중인 이동 tween 중지
       this.tweens.killTweensOf(visual.circle);
       this.tweens.killTweensOf(visual.shine);
@@ -1254,6 +1267,7 @@ export class GameScene extends Phaser.Scene {
       if (!visual || visual.destroyed) return;
       visual.destroyed = true;
 
+      this.sfx.spawnDestroy();
       animSpawnDestroy(this, visual.bg, visual.hpBar, visual.hpBarBg, visual.label, visual.dirArrow);
       this.removeEnemyZoneForSpawn(msg.spawnId);
 
@@ -1288,6 +1302,7 @@ export class GameScene extends Phaser.Scene {
       animHpBar(this, visual.hpBar, baseX, 1.0, `spawn_hp_${msg.spawnId}`, this.hpTweens);
 
       // 팝인 애니메이션
+      this.sfx.spawnRespawn();
       animSpawnRespawn(this, [visual.bg, visual.hpBar, visual.hpBarBg, visual.label, visual.dirArrow]);
     };
 
@@ -1300,16 +1315,19 @@ export class GameScene extends Phaser.Scene {
       if (!visual || visual.destroyed) return;
       visual.destroyed = true;
 
+      this.sfx.coreDestroy();
       animSpawnDestroy(this, visual.bg, visual.hpBar, visual.hpBarBg, visual.label);
     };
 
     this.socket.onReflectorPlaced = (msg: ReflectorPlacedMsg) => {
+      this.sfx.reflectorPlace();
       this.drawReflector(msg.x, msg.y, msg.type, msg.playerId);
       animReflectorPlace(this, this.tilesLayer, msg.x, msg.y, this.getTeamColor(msg.playerId));
       this.updateReflectorCount();
     };
 
     this.socket.onReflectorRemoved = (msg: ReflectorRemovedMsg) => {
+      this.sfx.reflectorRemove();
       const key = `${msg.x},${msg.y}`;
       const visual = this.reflectorVisuals.get(key);
       if (visual) {
@@ -1328,6 +1346,11 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onGameOver = (msg: GameOverMsg) => {
+      if (msg.winnerId === this.myPlayerId) {
+        this.sfx.gameWin();
+      } else {
+        this.sfx.gameLose();
+      }
       this.time.delayedCall(1000, () => {
         this.scene.launch('ResultScene', {
           winnerId: msg.winnerId,
@@ -1434,6 +1457,7 @@ export class GameScene extends Phaser.Scene {
     if (!visual) return;
 
     // 파괴 애니메이션
+    this.sfx.wallDestroy();
     this.tweens.add({
       targets: [visual.bg, visual.hpBar, visual.hpBarBg, visual.hpText],
       alpha: 0,
