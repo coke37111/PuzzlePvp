@@ -7,8 +7,17 @@ export const HP_BAR_HEIGHT = 8;
 export const PLAYER_COLORS = [0x4488ff, 0xff4444];
 export const PLAYER_COLORS_DARK = [0x224488, 0x882222];
 
-// === 공 색상 (팀 구분 없이 흰색) ===
+// === 공 색상 (팀 컬러: 인덱스 0=내 공, 1=적 공) ===
 export const BALL_COLOR = 0xffffff;
+export const BALL_TEAM_COLORS = [0x66aaff, 0xff6666];
+export const BALL_POWERED_SCALE = 1.35;
+
+// === 몬스터 ===
+export const MONSTER_COLOR = 0xff8800;
+export const MONSTER_BORDER = 0xffcc00;
+
+// === 아이템 ===
+export const ITEM_COLOR = 0xff4444;
 
 // === 배경/그리드 ===
 export const BG_COLOR = 0x12121e;

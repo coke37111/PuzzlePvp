@@ -293,6 +293,7 @@ export class BattleSimulator {
         const idx = this.monsters[pid].findIndex(m => m.active && m.x === tile.x && m.y === tile.y);
         if (idx === -1) continue;
         const monster = this.monsters[pid][idx];
+        const monsterHpBefore = monster.hp;
         monster.damage(ball.power);
         if (!monster.active) {
           this.onMonsterKilled?.(monster.id, monster.x, monster.y);
@@ -308,10 +309,14 @@ export class BattleSimulator {
           } else {
             this.monsters[pid].splice(idx, 1); // 빈 자리 정리
           }
+          // 관통: 남은 공격력으로 계속 진행
+          ball.power -= monsterHpBefore;
+          if (ball.power <= 0) return true; // 공 소멸
+          // ball.power > 0이면 관통 (공 계속)
         } else {
           this.onMonsterDamaged?.(monster.id, monster.hp, monster.maxHp);
+          return true; // 공 소멸
         }
-        return true; // 공 소멸
       }
 
       // 3. 성벽 체크
@@ -602,14 +607,20 @@ export class BattleSimulator {
     }
   }
 
-  /** (x,y)가 playerId에게 적 스폰타일 상하좌우 인접 1칸인지 확인 */
+  /** (x,y)가 playerId에게 적 스폰타일 발사 방향 1칸인지 확인 */
   isEnemySpawnZone(playerId: number, x: number, y: number): boolean {
     for (const sp of this.spawnPoints) {
       if (sp.ownerId === playerId) continue; // 아군 스폰은 무시
       if (!sp.active) continue; // 파괴된 스폰은 보호 구역 없음
-      const dx = Math.abs(sp.tile.x - x);
-      const dy = Math.abs(sp.tile.y - y);
-      if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) return true; // 상하좌우만
+      let tx = sp.tile.x;
+      let ty = sp.tile.y;
+      switch (sp.spawnDirection) {
+        case Direction.Up:    ty -= 1; break;
+        case Direction.Down:  ty += 1; break;
+        case Direction.Left:  tx -= 1; break;
+        case Direction.Right: tx += 1; break;
+      }
+      if (x === tx && y === ty) return true;
     }
     return false;
   }

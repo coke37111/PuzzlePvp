@@ -23,7 +23,15 @@ import {
   SpawnRespawnedMsg,
   SpawnPhaseCompleteMsg,
   ReflectorStockMsg,
-  MovingWallMovedMsg,
+  MonsterSpawnedMsg,
+  MonsterDamagedMsg,
+  MonsterKilledMsg,
+  MonsterMovedMsg,
+  ItemDroppedMsg,
+  ItemPickedUpMsg,
+  BallPoweredUpMsg,
+  SpawnHealedMsg,
+  CoreHealedMsg,
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
@@ -54,7 +62,15 @@ export class SocketClient {
   onCoreDestroyed?: (msg: CoreDestroyedMsg) => void;
   onSpawnPhaseComplete?: (msg: SpawnPhaseCompleteMsg) => void;
   onReflectorStock?: (msg: ReflectorStockMsg) => void;
-  onMovingWallMoved?: (msg: MovingWallMovedMsg) => void;
+  onMonsterSpawned?: (msg: MonsterSpawnedMsg) => void;
+  onMonsterDamaged?: (msg: MonsterDamagedMsg) => void;
+  onMonsterKilled?: (msg: MonsterKilledMsg) => void;
+  onMonsterMoved?: (msg: MonsterMovedMsg) => void;
+  onItemDropped?: (msg: ItemDroppedMsg) => void;
+  onItemPickedUp?: (msg: ItemPickedUpMsg) => void;
+  onBallPoweredUp?: (msg: BallPoweredUpMsg) => void;
+  onSpawnHealed?: (msg: SpawnHealedMsg) => void;
+  onCoreHealed?: (msg: CoreHealedMsg) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 
@@ -97,7 +113,15 @@ export class SocketClient {
     this.socket.on(SocketEvent.CORE_DESTROYED, (msg: CoreDestroyedMsg) => this.onCoreDestroyed?.(msg));
     this.socket.on(SocketEvent.SPAWN_PHASE_COMPLETE, (msg: SpawnPhaseCompleteMsg) => this.onSpawnPhaseComplete?.(msg));
     this.socket.on(SocketEvent.REFLECTOR_STOCK, (msg: ReflectorStockMsg) => this.onReflectorStock?.(msg));
-    this.socket.on(SocketEvent.MOVING_WALL_MOVED, (msg: MovingWallMovedMsg) => this.onMovingWallMoved?.(msg));
+    this.socket.on(SocketEvent.MONSTER_SPAWNED, (msg: MonsterSpawnedMsg) => this.onMonsterSpawned?.(msg));
+    this.socket.on(SocketEvent.MONSTER_DAMAGED, (msg: MonsterDamagedMsg) => this.onMonsterDamaged?.(msg));
+    this.socket.on(SocketEvent.MONSTER_KILLED, (msg: MonsterKilledMsg) => this.onMonsterKilled?.(msg));
+    this.socket.on(SocketEvent.MONSTER_MOVED, (msg: MonsterMovedMsg) => this.onMonsterMoved?.(msg));
+    this.socket.on(SocketEvent.ITEM_DROPPED, (msg: ItemDroppedMsg) => this.onItemDropped?.(msg));
+    this.socket.on(SocketEvent.ITEM_PICKED_UP, (msg: ItemPickedUpMsg) => this.onItemPickedUp?.(msg));
+    this.socket.on(SocketEvent.BALL_POWERED_UP, (msg: BallPoweredUpMsg) => this.onBallPoweredUp?.(msg));
+    this.socket.on(SocketEvent.SPAWN_HEALED, (msg: SpawnHealedMsg) => this.onSpawnHealed?.(msg));
+    this.socket.on(SocketEvent.CORE_HEALED, (msg: CoreHealedMsg) => this.onCoreHealed?.(msg));
   }
 
   get isConnected(): boolean {

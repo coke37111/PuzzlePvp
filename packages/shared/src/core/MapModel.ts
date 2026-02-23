@@ -141,28 +141,28 @@ export function createDefaultBattleMapData(): MapData {
   // TileRegistry의 TILE_INDEX와 일치:
   // 1=Empty, 2=StartRight(P1), 3=StartLeft(P2), 4=StartUp(P1), 5=StartDown(P2)
   // 6=CoreP1, 7=Block, 8=CoreP2
-  // P1 스폰: (3,5) 위쪽 발사, (5,7) 오른쪽 발사
-  // P2 스폰: (7,1) 왼쪽 발사, (9,3) 아래쪽 발사
-  // P1 코어: (3,7), P2 코어: (9,1)
+  // P1 스폰: (0,6) 위쪽 발사, (2,8) 오른쪽 발사
+  // P2 스폰: (10,0) 왼쪽 발사, (12,2) 아래쪽 발사
+  // P1 코어: (0,8), P2 코어: (12,0)
   const E  = 1; // Empty (반사판 설치 가능)
-  const SR = 2; // Start Right (P1, 오른쪽 발사) - (5,7)
-  const SL = 3; // Start Left  (P2, 왼쪽 발사)  - (7,1)
-  const SU = 4; // Start Up    (P1, 위쪽 발사)   - (3,5)
-  const SD = 5; // Start Down  (P2, 아래쪽 발사) - (9,3)
-  const C1 = 6; // Core P1                       - (3,7)
-  const C2 = 8; // Core P2                       - (9,1)
+  const SR = 2; // Start Right (P1, 오른쪽 발사) - (2,8)
+  const SL = 3; // Start Left  (P2, 왼쪽 발사)  - (10,0)
+  const SU = 4; // Start Up    (P1, 위쪽 발사)   - (0,6)
+  const SD = 5; // Start Down  (P2, 아래쪽 발사) - (12,2)
+  const C1 = 6; // Core P1                       - (0,8)
+  const C2 = 8; // Core P2                       - (12,0)
 
   const tiles: number[][] = [
     // x=  0    1    2    3    4    5    6    7    8    9   10   11   12
-    /*y=0*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=1*/ [E,   E,   E,   E,   E,   E,   E,   SL,  E,   C2,  E,   E,   E  ],
-    /*y=2*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=3*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   SD,  E,   E,   E  ],
+    /*y=0*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   SL,  E,   C2 ],
+    /*y=1*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=2*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   SD ],
+    /*y=3*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
     /*y=4*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=5*/ [E,   E,   E,   SU,  E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=6*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=7*/ [E,   E,   E,   C1,  E,   SR,  E,   E,   E,   E,   E,   E,   E  ],
-    /*y=8*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=5*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=6*/ [SU,  E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=7*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=8*/ [C1,  E,   SR,  E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
   ];
 
   return { width: WIDTH, height: HEIGHT, tiles };

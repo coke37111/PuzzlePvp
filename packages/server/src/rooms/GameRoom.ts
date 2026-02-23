@@ -30,7 +30,16 @@ import {
   CoreDestroyedMsg,
   SpawnPhaseCompleteMsg,
   ReflectorStockMsg,
-  MovingWallMovedMsg,
+  MonsterInfo,
+  MonsterSpawnedMsg,
+  MonsterDamagedMsg,
+  MonsterKilledMsg,
+  MonsterMovedMsg,
+  ItemDroppedMsg,
+  ItemPickedUpMsg,
+  BallPoweredUpMsg,
+  SpawnHealedMsg,
+  CoreHealedMsg,
 } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
@@ -175,9 +184,49 @@ export class GameRoom {
       this.broadcast(SocketEvent.REFLECTOR_STOCK, msg);
     };
 
-    this.simulator.onMovingWallMoved = (fromX, fromY, toX, toY) => {
-      const msg: MovingWallMovedMsg = { fromX, fromY, toX, toY };
-      this.broadcast(SocketEvent.MOVING_WALL_MOVED, msg);
+    this.simulator.onMonsterSpawned = (id, x, y, hp, maxHp) => {
+      const msg: MonsterSpawnedMsg = { id, x, y, hp, maxHp };
+      this.broadcast(SocketEvent.MONSTER_SPAWNED, msg);
+    };
+
+    this.simulator.onMonsterDamaged = (id, hp, maxHp) => {
+      const msg: MonsterDamagedMsg = { id, hp, maxHp };
+      this.broadcast(SocketEvent.MONSTER_DAMAGED, msg);
+    };
+
+    this.simulator.onMonsterKilled = (id, x, y) => {
+      const msg: MonsterKilledMsg = { id, x, y };
+      this.broadcast(SocketEvent.MONSTER_KILLED, msg);
+    };
+
+    this.simulator.onMonsterMoved = (id, fromX, fromY, toX, toY) => {
+      const msg: MonsterMovedMsg = { id, fromX, fromY, toX, toY };
+      this.broadcast(SocketEvent.MONSTER_MOVED, msg);
+    };
+
+    this.simulator.onItemDropped = (itemId, x, y, itemType) => {
+      const msg: ItemDroppedMsg = { itemId, x, y, itemType };
+      this.broadcast(SocketEvent.ITEM_DROPPED, msg);
+    };
+
+    this.simulator.onItemPickedUp = (itemId, ballId, ballOwnerId) => {
+      const msg: ItemPickedUpMsg = { itemId, ballId, ballOwnerId };
+      this.broadcast(SocketEvent.ITEM_PICKED_UP, msg);
+    };
+
+    this.simulator.onBallPoweredUp = (ballId, ownerId) => {
+      const msg: BallPoweredUpMsg = { ballId, playerId: ownerId };
+      this.broadcast(SocketEvent.BALL_POWERED_UP, msg);
+    };
+
+    this.simulator.onSpawnHealed = (event) => {
+      const msg: SpawnHealedMsg = event;
+      this.broadcast(SocketEvent.SPAWN_HEALED, msg);
+    };
+
+    this.simulator.onCoreHealed = (event) => {
+      const msg: CoreHealedMsg = event;
+      this.broadcast(SocketEvent.CORE_HEALED, msg);
     };
   }
 
@@ -193,6 +242,7 @@ export class GameRoom {
       ownerId: sp.ownerId,
       hp: sp.hp,
       maxHp: sp.maxHp,
+      direction: sp.spawnDirection,
     }));
     const cores: CoreInfo[] = this.simulator.cores.map(c => ({
       id: c.id,
@@ -203,7 +253,16 @@ export class GameRoom {
       maxHp: c.maxHp,
     }));
 
-    const movingWall = this.simulator.getMovingWall() ?? undefined;
+    const monsters: MonsterInfo[] = this.simulator.getMonsters()
+      .filter(m => m.active)
+      .map(m => ({ id: m.id, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp }));
+    const walls = this.simulator.getWalls().map(w => ({
+      playerId: w.ownerId,
+      x: w.x,
+      y: w.y,
+      hp: w.hp,
+      maxHp: w.maxHp,
+    }));
     for (let i = 0; i < 2; i++) {
       const msg: MatchFoundMsg = {
         roomId: this.id,
@@ -216,7 +275,8 @@ export class GameRoom {
         reflectorCooldown: DEFAULT_BATTLE_CONFIG.reflectorCooldown,
         maxReflectorStock: DEFAULT_BATTLE_CONFIG.maxReflectorStock,
         initialReflectorStock: DEFAULT_BATTLE_CONFIG.initialReflectorStock,
-        movingWall,
+        monsters,
+        walls,
       };
       this.players[i].emit(SocketEvent.MATCH_FOUND, msg);
     }

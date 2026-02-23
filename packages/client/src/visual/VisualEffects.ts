@@ -14,18 +14,19 @@ import {
   ANIM_DAMAGE_POPUP_FADE_START,
 } from './Constants';
 
-/** 공 스폰: scale 0.3→1.0, alpha 0.5→1.0 */
+/** 공 스폰: scale 0.3→targetScale, alpha 0.5→1.0 */
 export function animBallSpawn(
   scene: Phaser.Scene,
   targets: Phaser.GameObjects.Arc[],
+  targetScale: number = 1,
 ): void {
   for (const t of targets) {
     t.setScale(0.3).setAlpha(0.5);
   }
   scene.tweens.add({
     targets,
-    scaleX: 1,
-    scaleY: 1,
+    scaleX: targetScale,
+    scaleY: targetScale,
     alpha: 1,
     duration: ANIM_BALL_SPAWN,
     ease: 'Back.easeOut',
@@ -228,6 +229,40 @@ function lerpColor(a: number, b: number, t: number): number {
   const g = Math.round(ag + (bg - ag) * t);
   const bl = Math.round(ab + (bb - ab) * t);
   return (r << 16) | (g << 8) | bl;
+}
+
+/** 힐 팝업: "+1" 초록색 텍스트가 위로 날아가며 페이드 아웃 */
+export function animHealPopup(
+  scene: Phaser.Scene,
+  container: Phaser.GameObjects.Container,
+  worldX: number,
+  worldY: number,
+): void {
+  const text = scene.add.text(worldX, worldY, '+1', {
+    fontSize: '16px',
+    color: '#44ff88',
+    fontStyle: 'bold',
+    stroke: '#000000',
+    strokeThickness: 3,
+  }).setOrigin(0.5, 1);
+  container.add(text);
+
+  scene.tweens.add({
+    targets: text,
+    y: worldY + ANIM_DAMAGE_POPUP_MOVE_Y,
+    duration: ANIM_DAMAGE_POPUP_DURATION,
+    ease: 'Quad.easeOut',
+    onComplete: () => text.destroy(),
+  });
+
+  scene.time.delayedCall(ANIM_DAMAGE_POPUP_FADE_START, () => {
+    scene.tweens.add({
+      targets: text,
+      alpha: 0,
+      duration: ANIM_DAMAGE_POPUP_DURATION - ANIM_DAMAGE_POPUP_FADE_START,
+      ease: 'Linear',
+    });
+  });
 }
 
 /** 데미지 팝업: "-N" 텍스트가 위로 날아가며 페이드 아웃 */

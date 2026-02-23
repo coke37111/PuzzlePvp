@@ -5,7 +5,7 @@ export class CoreModel {
   readonly id: number;
   readonly tile: TileModel;
   readonly ownerId: number;
-  readonly maxHp: number;
+  maxHp: number;
   hp: number;
   active: boolean = true;
 
@@ -17,9 +17,18 @@ export class CoreModel {
     this.hp = maxHp;
   }
 
-  damage(): void {
+  /** 아군 공 도착 → HP 회복 (amount만큼, maxHp 초과 시 maxHp도 증가) */
+  heal(amount: number = 1): void {
     if (!this.active) return;
-    this.hp = Math.max(this.hp - 1, 0);
+    this.hp += amount;
+    if (this.hp > this.maxHp) {
+      this.maxHp = this.hp;
+    }
+  }
+
+  damage(amount: number = 1): void {
+    if (!this.active) return;
+    this.hp = Math.max(this.hp - amount, 0);
     if (this.hp === 0) {
       this.active = false;
     }
@@ -31,7 +40,7 @@ export class SpawnPointModel {
   readonly tile: TileModel;
   readonly ownerId: number;
   readonly spawnDirection: Direction;
-  readonly maxHp: number;
+  maxHp: number;
   hp: number;
   active: boolean = true;
 
@@ -44,16 +53,19 @@ export class SpawnPointModel {
     this.hp = maxHp;
   }
 
-  /** 자기 공 도착 → HP 회복 (+1, maxHp 초과 불가) */
-  heal(): void {
+  /** 아군 공 도착 → HP 회복 (amount만큼, maxHp 초과 시 maxHp도 증가) */
+  heal(amount: number = 1): void {
     if (!this.active) return;
-    this.hp = Math.min(this.hp + 1, this.maxHp);
+    this.hp += amount;
+    if (this.hp > this.maxHp) {
+      this.maxHp = this.hp;
+    }
   }
 
-  /** 적 공 도착 → HP 감소 (-1) */
-  damage(): void {
+  /** 적 공 도착 → HP 감소 */
+  damage(amount: number = 1): void {
     if (!this.active) return;
-    this.hp = Math.max(this.hp - 1, 0);
+    this.hp = Math.max(this.hp - amount, 0);
     if (this.hp === 0) {
       this.active = false;
     }

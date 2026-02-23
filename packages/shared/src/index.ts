@@ -15,6 +15,8 @@ export type { BattleConfig, SpawnEvent, BattleResult, WallState, ItemCounts, Wal
 export { createTileData, EMPTY_TILE_INDEX } from './core/TileData';
 export { TileModel } from './core/TileModel';
 export { BallModel } from './core/BallModel';
+export { MonsterModel } from './core/MonsterModel';
+export { DroppedItemModel, DropItemType } from './core/ItemModel';
 export { MapModel, createBattleMap, createDefaultBattleMapData } from './core/MapModel';
 export { BallSimulatorHistory } from './core/BallSimulatorHistory';
 export { BallSimulationInstance } from './core/BallSimulationInstance';
@@ -27,7 +29,7 @@ export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
 export type {
   JoinQueueMsg, PlaceReflectorMsg, RemoveReflectorMsg,
   PlaceWallMsg, UseTimeStopMsg,
-  SpawnPointInfo, CoreInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg, SpawnRespawnedMsg,
+  SpawnPointInfo, CoreInfo, MonsterInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg, SpawnRespawnedMsg,
   ReflectorPlacedMsg, ReflectorRemovedMsg,
   BallSpawnedMsg, BallMovedMsg, BallEndedMsg, GameOverMsg,
   WallPlacedMsg, WallDamagedMsg, WallDestroyedMsg,
@@ -35,7 +37,9 @@ export type {
   CoreHpMsg, CoreDestroyedMsg,
   SpawnPhaseCompleteMsg,
   ReflectorStockMsg,
-  MovingWallMovedMsg,
+  MonsterSpawnedMsg, MonsterDamagedMsg, MonsterKilledMsg, MonsterMovedMsg,
+  ItemDroppedMsg, ItemPickedUpMsg, BallPoweredUpMsg,
+  SpawnHealedMsg, CoreHealedMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

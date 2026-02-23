@@ -624,21 +624,23 @@ export class GameScene extends Phaser.Scene {
     const { width, height } = this.mapData;
     const color = this.getTeamColor(ownerId);
     const overlays: Phaser.GameObjects.Rectangle[] = [];
-    const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
-    for (const [dx, dy] of CARDINAL) {
+    const spInfo = this.serverSpawnPoints.find(sp => sp.id === spawnId);
+    const dir = spInfo?.direction ?? 0;
+    const dirOffsets: Record<number, [number, number]> = { 1: [0, -1], 2: [0, 1], 3: [-1, 0], 4: [1, 0] };
+    const [dx, dy] = dirOffsets[dir] ?? [0, 0];
+    if (dx !== 0 || dy !== 0) {
       const nx = spawnX + dx;
       const ny = spawnY + dy;
-      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-      if (this.mapData.tiles[ny][nx] !== 1) continue;
-
-      const key = `${nx},${ny}`;
-      this.enemyZoneTiles.add(key);
-      const px = nx * TILE_SIZE + TILE_SIZE / 2;
-      const py = ny * TILE_SIZE + TILE_SIZE / 2;
-      const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
-      this.tilesLayer.add(overlay);
-      overlays.push(overlay);
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height && this.mapData.tiles[ny][nx] === 1) {
+        const key = `${nx},${ny}`;
+        this.enemyZoneTiles.add(key);
+        const px = nx * TILE_SIZE + TILE_SIZE / 2;
+        const py = ny * TILE_SIZE + TILE_SIZE / 2;
+        const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
+        this.tilesLayer.add(overlay);
+        overlays.push(overlay);
+      }
     }
     this.enemyZoneOverlays.set(spawnId, overlays);
   }
@@ -656,18 +658,17 @@ export class GameScene extends Phaser.Scene {
   private rebuildEnemyZoneTiles(): void {
     this.enemyZoneTiles.clear();
     const { width, height } = this.mapData;
-    const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    const dirOffsets: Record<number, [number, number]> = { 1: [0, -1], 2: [0, 1], 3: [-1, 0], 4: [1, 0] };
     for (const sp of this.serverSpawnPoints) {
       if (sp.ownerId === this.myPlayerId) continue;
-      // 이 스폰의 오버레이가 아직 존재하면 활성 상태
       if (!this.enemyZoneOverlays.has(sp.id)) continue;
-      for (const [dx, dy] of CARDINAL) {
-        const nx = sp.x + dx;
-        const ny = sp.y + dy;
-        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-        if (this.mapData.tiles[ny][nx] !== 1) continue;
-        this.enemyZoneTiles.add(`${nx},${ny}`);
-      }
+      const [dx, dy] = dirOffsets[sp.direction] ?? [0, 0];
+      if (dx === 0 && dy === 0) continue;
+      const nx = sp.x + dx;
+      const ny = sp.y + dy;
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+      if (this.mapData.tiles[ny][nx] !== 1) continue;
+      this.enemyZoneTiles.add(`${nx},${ny}`);
     }
   }
 
@@ -997,6 +998,10 @@ export class GameScene extends Phaser.Scene {
       const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       const popupY = visual.y * TILE_SIZE;
       animDamagePopup(this, this.tilesLayer, popupX, popupY, damage);
+    } else if (hp > oldHp) {
+      const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+      const popupY = visual.y * TILE_SIZE;
+      animHealPopup(this, this.tilesLayer, popupX, popupY);
     }
   }
 
@@ -1155,7 +1160,7 @@ export class GameScene extends Phaser.Scene {
     // 볼륨 토글 버튼 (좌상단)
     const BTN_W = 52, BTN_H = 20;
     const btnX = 8 + BTN_W / 2;
-    const btnY = 10;
+    const btnY = 52;
     this.muteBtnBg = this.add.rectangle(btnX, btnY, BTN_W, BTN_H, 0x223322)
       .setStrokeStyle(1, 0x448844)
       .setInteractive({ useHandCursor: true })

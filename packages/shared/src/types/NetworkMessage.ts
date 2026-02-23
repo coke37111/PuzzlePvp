@@ -1,6 +1,7 @@
 import { ReflectorType } from '../enums/ReflectorType';
 import { Direction } from '../enums/Direction';
 import { MapData } from '../core/MapModel';
+import { DropItemType } from '../core/ItemModel';
 
 // ─── 클라이언트 → 서버 ───────────────────────────────────────────
 
@@ -37,6 +38,7 @@ export interface SpawnPointInfo {
   ownerId: number;
   hp: number;
   maxHp: number;
+  direction: number; // Direction enum 값 (Up=1,Down=2,Left=3,Right=4)
 }
 
 export interface CoreInfo {
@@ -44,6 +46,14 @@ export interface CoreInfo {
   x: number;
   y: number;
   ownerId: number;
+  hp: number;
+  maxHp: number;
+}
+
+export interface MonsterInfo {
+  id: number;
+  x: number;
+  y: number;
   hp: number;
   maxHp: number;
 }
@@ -59,14 +69,68 @@ export interface MatchFoundMsg {
   reflectorCooldown: number;      // 반사판 1개 재생성 시간 (초)
   maxReflectorStock: number;      // 반사판 최대 보유 수
   initialReflectorStock: number;  // 게임 시작 초기 보유 수
-  movingWall?: { x: number; y: number }; // 무빙 월 초기 위치
+  monsters: MonsterInfo[];         // 몬스터 초기 상태 (플레이어별 1마리씩)
+  walls: WallPlacedMsg[];          // 초기 벽 목록 (중앙 구분벽 포함)
 }
 
-export interface MovingWallMovedMsg {
+export interface MonsterSpawnedMsg {
+  id: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+}
+
+export interface MonsterDamagedMsg {
+  id: number;
+  hp: number;
+  maxHp: number;
+}
+
+export interface MonsterKilledMsg {
+  id: number;
+  x: number;
+  y: number;
+}
+
+export interface MonsterMovedMsg {
+  id: number;
   fromX: number;
   fromY: number;
   toX: number;
   toY: number;
+}
+
+export interface ItemDroppedMsg {
+  itemId: number;
+  x: number;
+  y: number;
+  itemType: DropItemType;
+}
+
+export interface ItemPickedUpMsg {
+  itemId: number;
+  ballId: number;
+  ballOwnerId: number;
+}
+
+export interface BallPoweredUpMsg {
+  ballId: number;
+  playerId: number;
+}
+
+export interface SpawnHealedMsg {
+  spawnId: number;
+  hp: number;
+  maxHp: number;
+  ownerId: number;
+}
+
+export interface CoreHealedMsg {
+  coreId: number;
+  hp: number;
+  maxHp: number;
+  ownerId: number;
 }
 
 export interface SpawnHpMsg {
@@ -204,5 +268,13 @@ export const SocketEvent = {
   TIME_STOP_ENDED: 'time_stop_ended',
   CORE_HP: 'core_hp',
   CORE_DESTROYED: 'core_destroyed',
-  MOVING_WALL_MOVED: 'moving_wall_moved',
+  MONSTER_SPAWNED: 'monster_spawned',
+  MONSTER_DAMAGED: 'monster_damaged',
+  MONSTER_KILLED: 'monster_killed',
+  MONSTER_MOVED: 'monster_moved',
+  ITEM_DROPPED: 'item_dropped',
+  ITEM_PICKED_UP: 'item_picked_up',
+  BALL_POWERED_UP: 'ball_powered_up',
+  SPAWN_HEALED: 'spawn_healed',
+  CORE_HEALED: 'core_healed',
 } as const;
