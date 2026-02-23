@@ -76,6 +76,8 @@ export class BallSimulator {
     }
   }
 
+  get currentPhaseCount(): number { return this.currentPhase; }
+
   /** 배틀 모드: 인스턴스 클리어 후 페이즈 카운터만 초기화 (nextBallId 유지) */
   resetPhaseCounters(): void {
     this.currentPhase = 0;

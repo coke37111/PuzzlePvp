@@ -54,9 +54,9 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   maxReflectorsPerPlayer: 5,
   reflectorCooldown: 3.0,
   maxReflectorStock: 5,
-  initialReflectorStock: 2,
-  spawnHp: 10,
-  coreHp: 10,
+  initialReflectorStock: 3,
+  spawnHp: 7,
+  coreHp: 15,
   maxWallsPerPlayer: 3,
   wallHp: 10,
   timeStopUsesPerPlayer: 1,
@@ -133,6 +133,10 @@ export class BattleSimulator {
   onMovingWallMoved?: (fromX: number, fromY: number, toX: number, toY: number) => void;
 
   private movingWall: { x: number; y: number } | null = null;
+
+  // 타워별 순차 발사 큐 (spawnId → 발사 대기 목록)
+  private spawnQueues: Map<number, { tile: TileModel; direction: Direction; ownerId: number }[]> = new Map();
+  private lastSimPhase: number = -1; // 마지막으로 공을 발사한 시뮬레이터 페이즈
 
   getMovingWall(): { x: number; y: number } | null {
     return this.movingWall ? { ...this.movingWall } : null;
@@ -284,10 +288,17 @@ export class BattleSimulator {
     // 공 시뮬레이션 진행 (인스턴스 없어도 timer는 계속)
     if (this.simulator.instances.length > 0) {
       const allEnded = this.simulator.update(delta);
+      // 페이즈 변경 시 다음 큐 발사 (페이즈 경계에 맞춰 발사 → 겹침 방지)
+      const currPhase = this.simulator.currentPhaseCount;
+      if (currPhase > this.lastSimPhase) {
+        this.lastSimPhase = currPhase;
+        this.fireNextQueuedBalls();
+      }
       // 종료된 인스턴스 정리 + 페이즈 카운터 리셋 (maxPhaseLimit 초과 방지)
       if (allEnded) {
         this.simulator.instances = [];
         this.simulator.resetPhaseCounters();
+        this.lastSimPhase = -1;
       }
     }
 
@@ -357,15 +368,33 @@ export class BattleSimulator {
     const effectiveTimePerPhase = Math.max(t, t * 2 - (this._phaseNumber - 1) * (t / ramp));
     this.simulator.setTimePerPhase(effectiveTimePerPhase);
 
-    // 모든 스폰포인트에서 동시 발사
+    // 타워별 큐에 추가 (페이즈 경계마다 1발씩 순차 발사 → 겹침 방지)
     for (const sp of this.spawnPoints) {
       if (!sp.active) continue;
+      const queue = this.spawnQueues.get(sp.id) ?? [];
       for (let i = 0; i < ballCount; i++) {
-        this.simulator.spawnBall(sp.tile, sp.spawnDirection, sp.ownerId);
+        queue.push({ tile: sp.tile, direction: sp.spawnDirection, ownerId: sp.ownerId });
       }
+      this.spawnQueues.set(sp.id, queue);
     }
 
     this.onSpawnPhaseComplete?.(this._phaseNumber);
+
+    // 인스턴스가 없으면 첫 공을 즉시 발사 (이후 공은 페이즈 변경 시 자동 발사)
+    if (this.simulator.instances.length === 0) {
+      this.fireNextQueuedBalls();
+      this.lastSimPhase = this.simulator.currentPhaseCount;
+    }
+  }
+
+  /** 각 타워 큐에서 공 한 발씩 발사 */
+  private fireNextQueuedBalls(): void {
+    for (const queue of this.spawnQueues.values()) {
+      if (queue.length > 0) {
+        const entry = queue.shift()!;
+        this.simulator.spawnBall(entry.tile, entry.direction, entry.ownerId);
+      }
+    }
   }
 
   private pickRandomEmptyTile(): { x: number; y: number } | null {
@@ -383,18 +412,28 @@ export class BattleSimulator {
     for (const key of this.walls.keys()) occupied.add(key);
     if (this.movingWall) occupied.add(`${this.movingWall.x},${this.movingWall.y}`);
 
-    const candidates: { x: number; y: number }[] = [];
+    const center = (size - 1) / 2;
+    const maxDist = center;
+    const candidates: { x: number; y: number; weight: number }[] = [];
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const tile = this.map.getTile(x, y);
         if (!tile || !tile.isReflectorSetable) continue;
         if (occupied.has(`${x},${y}`)) continue;
         if (this.map.reflectors.has(x + y * 100)) continue;
-        candidates.push({ x, y });
+        const dist = Math.max(Math.abs(x - center), Math.abs(y - center));
+        const weight = 2 - dist / maxDist;
+        candidates.push({ x, y, weight });
       }
     }
     if (candidates.length === 0) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)];
+    const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0);
+    let rand = Math.random() * totalWeight;
+    for (const c of candidates) {
+      rand -= c.weight;
+      if (rand <= 0) return { x: c.x, y: c.y };
+    }
+    return { x: candidates[candidates.length - 1].x, y: candidates[candidates.length - 1].y };
   }
 
   private checkWinCondition(): void {
