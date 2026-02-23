@@ -83,6 +83,11 @@ export class BallSimulator {
     this.lastTileChangedPhase = -1;
   }
 
+  /** 공 이동 속도 변경 (배틀 중 동적 조정용) */
+  setTimePerPhase(value: number): void {
+    this.timePerPhase = value;
+  }
+
   /** 배틀 모드용 초기화 (Start 타일에서 자동 생성하지 않음) */
   initForBattle(timePerPhase: number = 0.3, tickTime: number = 0.03): void {
     this.timePerPhase = timePerPhase;

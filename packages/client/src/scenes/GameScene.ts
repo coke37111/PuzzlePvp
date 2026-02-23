@@ -122,11 +122,14 @@ export class GameScene extends Phaser.Scene {
   private serverSpawnPoints: SpawnPointInfo[] = [];
   private serverCores: CoreInfo[] = [];
   private timePerPhase: number = 0.3;
+  private currentPhaseNumber: number = 0;
+  private static readonly SPEED_RAMP_TURNS = 10;
 
   private gridOffsetX: number = 0;
   private gridOffsetY: number = 0;
 
   private ballVisuals: Map<number, BallVisual> = new Map();
+  private pendingBallSpawns: Map<number, { ownerId: number; phaseNumber: number }> = new Map();
   private spawnVisuals: Map<number, SpawnVisual> = new Map();
   private coreVisuals: Map<number, CoreVisual> = new Map();
   private reflectorVisuals: Map<string, ReflectorVisual> = new Map();
@@ -229,6 +232,7 @@ export class GameScene extends Phaser.Scene {
 
     // 상태 초기화
     this.ballVisuals.clear();
+    this.pendingBallSpawns.clear();
     for (const v of this.spawnVisuals.values()) this.clearSpawnCountdown(v);
     this.spawnVisuals.clear();
     this.coreVisuals.clear();
@@ -1153,6 +1157,7 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onSpawnPhaseComplete = (msg: SpawnPhaseCompleteMsg) => {
+      this.currentPhaseNumber = msg.phaseNumber;
       if (this.spawnGaugeFill) {
         this.tweens.killTweensOf(this.spawnGaugeFill);
         this.startSpawnGauge(msg.phaseNumber);
@@ -1160,48 +1165,47 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onBallSpawned = (msg: BallSpawnedMsg) => {
-      const tile = this.mapModel.getTile(msg.x, msg.y);
-      if (!tile) return;
-
-      // 종료 애니메이션 중인 같은 ID 방어
       if (this.endingBalls.has(msg.ballId)) return;
 
       // 페이즈가 바뀌는 첫 공 → 즉시 진동 (게이지 완료 타이밍)
       if (msg.phaseNumber !== this.phaseCount) {
-        this.phaseCount = msg.phaseNumber; // 중복 진동 방지
+        this.phaseCount = msg.phaseNumber;
         this.shakeBoard();
       }
 
-      const px = msg.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = msg.y * TILE_SIZE + TILE_SIZE / 2;
-
-      // 공 (흰색, 반투명)
-      const circle = this.add.circle(px, py, BALL_RADIUS, BALL_COLOR, 0.6);
-      this.ballsLayer.add(circle);
-
-      // 광택 하이라이트
-      const shine = this.add.circle(px, py, 4, 0xffffff, 0.4);
-      this.ballsLayer.add(shine);
-
-      const visual: BallVisual = {
-        circle, shine,
-        ballId: msg.ballId,
-        ownerId: msg.ownerId,
-      };
-      this.ballVisuals.set(msg.ballId, visual);
-
-      // 스폰 애니메이션
-      animBallSpawn(this, [circle, shine]);
+      // 시각적 생성은 첫 onBallMoved까지 보류 (스폰 후 대기 없이 바로 출발하는 효과)
+      this.pendingBallSpawns.set(msg.ballId, { ownerId: msg.ownerId, phaseNumber: msg.phaseNumber });
     };
 
     this.socket.onBallMoved = (msg: BallMovedMsg) => {
+      if (this.endingBalls.has(msg.ballId)) return;
+
+      // 첫 이동: pending에서 visual 생성
+      if (!this.ballVisuals.has(msg.ballId)) {
+        const pending = this.pendingBallSpawns.get(msg.ballId);
+        if (!pending) return;
+        this.pendingBallSpawns.delete(msg.ballId);
+
+        const px = msg.fromX * TILE_SIZE + TILE_SIZE / 2;
+        const py = msg.fromY * TILE_SIZE + TILE_SIZE / 2;
+        const circle = this.add.circle(px, py, BALL_RADIUS, BALL_COLOR, 0.6);
+        this.ballsLayer.add(circle);
+        const shine = this.add.circle(px, py, 4, 0xffffff, 0.4);
+        this.ballsLayer.add(shine);
+        this.ballVisuals.set(msg.ballId, { circle, shine, ballId: msg.ballId, ownerId: pending.ownerId });
+        animBallSpawn(this, [circle, shine]);
+      }
+
       const visual = this.ballVisuals.get(msg.ballId);
       if (!visual) return;
-      if (this.endingBalls.has(msg.ballId)) return;
 
       const toX = msg.toX * TILE_SIZE + TILE_SIZE / 2;
       const toY = msg.toY * TILE_SIZE + TILE_SIZE / 2;
-      const duration = this.timePerPhase * 1000; // 초 → ms
+      // 서버와 동일한 속도 점진 증가 공식으로 현재 tween duration 계산
+      const ramp = GameScene.SPEED_RAMP_TURNS;
+      const t = this.timePerPhase;
+      const effectiveTime = Math.max(t, t * 2 - (this.currentPhaseNumber - 1) * (t / ramp));
+      const duration = effectiveTime * 1000; // 초 → ms
 
       // from→to를 timePerPhase 동안 클라이언트에서 자체 보간
       this.tweens.add({
@@ -1214,6 +1218,8 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onBallEnded = (msg: BallEndedMsg) => {
+      // pending 상태에서 끝나는 경우 정리
+      this.pendingBallSpawns.delete(msg.ballId);
       const visual = this.ballVisuals.get(msg.ballId);
       if (!visual) return;
       if (this.endingBalls.has(msg.ballId)) return;

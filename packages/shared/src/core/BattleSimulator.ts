@@ -89,10 +89,7 @@ export class BattleSimulator {
   private spawnTimer: number = 0;
   private _phaseNumber: number = 0;
   get phaseNumber(): number { return this._phaseNumber; }
-  private pendingSpawnQueue: Array<{ tile: TileModel; direction: Direction; ownerId: number }> = [];
-  private pendingSpawnTimer: number = 0;
-  private spawnQueueActive: boolean = false; // 공 발사 큐가 소진될 때까지 타이머 멈춤
-  private static readonly SPAWN_FIRE_INTERVAL = 0.2;
+  private static readonly SPEED_RAMP_TURNS = 10; // 10턴 후 정상 속도 도달
   // 반사판 스톡 & 쿨다운
   private reflectorStocks: Map<number, number> = new Map();   // playerId → stock
   private reflectorCooldownTimers: Map<number, number> = new Map(); // playerId → elapsed(초)
@@ -167,9 +164,6 @@ export class BattleSimulator {
     this.nextCoreId = 1;
     this.spawnTimer = 0;
     this._phaseNumber = 0;
-    this.pendingSpawnQueue = [];
-    this.pendingSpawnTimer = 0;
-    this.spawnQueueActive = false;
     this.spawnRespawnTimers.clear();
     this.spawnDestroyCount.clear();
     this.reflectorStocks.clear();
@@ -253,6 +247,9 @@ export class BattleSimulator {
 
     // BallSimulator 배틀 모드 초기화 (bracket notation 제거)
     this.simulator.initForBattle(this.config.timePerPhase);
+
+    // 게임 시작 즉시 첫 발사
+    this.spawnAll();
   }
 
   /** delta(초) 만큼 시뮬레이션 진행 */
@@ -279,29 +276,11 @@ export class BattleSimulator {
       }
     }
 
-    // 지연 발사 큐 처리
-    if (this.pendingSpawnQueue.length > 0) {
-      this.pendingSpawnTimer += delta;
-      while (this.pendingSpawnTimer >= BattleSimulator.SPAWN_FIRE_INTERVAL && this.pendingSpawnQueue.length > 0) {
-        this.pendingSpawnTimer -= BattleSimulator.SPAWN_FIRE_INTERVAL;
-        const next = this.pendingSpawnQueue.shift()!;
-        this.simulator.spawnBall(next.tile, next.direction, next.ownerId);
-      }
-      // 큐가 방금 비워졌으면 → 타이머 시작 신호
-      if (this.pendingSpawnQueue.length === 0 && this.spawnQueueActive) {
-        this.spawnQueueActive = false;
-        this.spawnTimer = 0;
-        this.onSpawnPhaseComplete?.(this._phaseNumber);
-      }
-    }
-
-    // 스폰 타이머: 큐가 비어있을 때만 진행
-    if (!this.spawnQueueActive) {
-      this.spawnTimer += delta;
-      if (this.spawnTimer >= this.config.spawnInterval) {
-        this.spawnTimer = 0;
-        this.spawnAll();
-      }
+    // 스폰 타이머
+    this.spawnTimer += delta;
+    if (this.spawnTimer >= this.config.spawnInterval) {
+      this.spawnTimer = 0;
+      this.spawnAll();
     }
 
     // 반사판 쿨다운 타이머
@@ -347,30 +326,21 @@ export class BattleSimulator {
     this._phaseNumber++;
     const ballCount = Math.floor(this._phaseNumber / 10) + 1;
 
-    // 첫 번째 공은 즉시 발사, 나머지는 0.2초 간격 큐에 추가
-    let firstFired = false;
+    // 속도 점진 증가: 1턴=2배 느림, 10턴마다 10% 빨라져 10턴 후 정상 속도
+    const ramp = BattleSimulator.SPEED_RAMP_TURNS;
+    const t = this.config.timePerPhase;
+    const effectiveTimePerPhase = Math.max(t, t * 2 - (this._phaseNumber - 1) * (t / ramp));
+    this.simulator.setTimePerPhase(effectiveTimePerPhase);
+
+    // 모든 스폰포인트에서 동시 발사
     for (const sp of this.spawnPoints) {
       if (!sp.active) continue;
       for (let i = 0; i < ballCount; i++) {
-        if (!firstFired) {
-          this.simulator.spawnBall(sp.tile, sp.spawnDirection, sp.ownerId);
-          this.pendingSpawnTimer = 0;
-          firstFired = true;
-        } else {
-          this.pendingSpawnQueue.push({ tile: sp.tile, direction: sp.spawnDirection, ownerId: sp.ownerId });
-        }
+        this.simulator.spawnBall(sp.tile, sp.spawnDirection, sp.ownerId);
       }
     }
 
-    if (this.pendingSpawnQueue.length > 0) {
-      // 큐가 있으면: 큐가 소진될 때까지 타이머 중단
-      this.spawnQueueActive = true;
-    } else {
-      // 큐가 없으면(공 1개 또는 스폰포인트 없음): 즉시 완료
-      this.spawnQueueActive = false;
-      this.spawnTimer = 0;
-      this.onSpawnPhaseComplete?.(this._phaseNumber);
-    }
+    this.onSpawnPhaseComplete?.(this._phaseNumber);
   }
 
   private checkWinCondition(): void {
