@@ -54,7 +54,7 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   maxReflectorsPerPlayer: 5,
   reflectorCooldown: 3.0,
   maxReflectorStock: 5,
-  initialReflectorStock: 1,
+  initialReflectorStock: 2,
   spawnHp: 10,
   coreHp: 10,
   maxWallsPerPlayer: 3,
