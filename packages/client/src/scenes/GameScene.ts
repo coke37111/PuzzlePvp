@@ -1414,9 +1414,9 @@ export class GameScene extends Phaser.Scene {
       // 카운트다운 정리
       this.clearSpawnCountdown(visual);
 
-      // 보호 구역 복원
+      // 보호 구역 복원 (상대방 스폰만)
       const spInfo = this.serverSpawnPoints.find(sp => sp.id === msg.spawnId);
-      if (spInfo) this.addEnemyZoneForSpawn(spInfo.id, spInfo.x, spInfo.y, spInfo.ownerId);
+      if (spInfo && spInfo.ownerId !== this.myPlayerId) this.addEnemyZoneForSpawn(spInfo.id, spInfo.x, spInfo.y, spInfo.ownerId);
 
       visual.destroyed = false;
       visual.currentHp = msg.hp;
