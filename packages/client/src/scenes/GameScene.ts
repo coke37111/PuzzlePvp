@@ -230,6 +230,8 @@ export class GameScene extends Phaser.Scene {
   private mySpawnSlotMap: Map<number, number> = new Map(); // spawnId → locked slot index
   private slotRespawnTimerEvents: Map<number, Phaser.Time.TimerEvent> = new Map(); // slot index → timer
   private sfx!: SoundManager;
+  private muteBtnBg: Phaser.GameObjects.Rectangle | null = null;
+  private muteBtnText: Phaser.GameObjects.Text | null = null;
   private monsterVisuals: Map<number, MonsterVisual> = new Map();
   private itemVisuals: Map<number, ItemVisual> = new Map();
   private _initMonsters: MonsterInfo[] = [];
@@ -313,6 +315,8 @@ export class GameScene extends Phaser.Scene {
     this.itemSlotWallText = null;
     this.itemSlotTsBg = null;
     this.itemSlotTsText = null;
+    this.muteBtnBg = null;
+    this.muteBtnText = null;
 
     this.sfx = new SoundManager();
     this.monsterVisuals = new Map();
@@ -1148,9 +1152,29 @@ export class GameScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const opponentId = 1 - this.myPlayerId;
 
+    // 볼륨 토글 버튼 (좌상단)
+    const BTN_W = 52, BTN_H = 20;
+    const btnX = 8 + BTN_W / 2;
+    const btnY = 10;
+    this.muteBtnBg = this.add.rectangle(btnX, btnY, BTN_W, BTN_H, 0x223322)
+      .setStrokeStyle(1, 0x448844)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(10);
+    this.muteBtnText = this.add.text(btnX, btnY, '♪ ON', {
+      fontSize: '11px', color: '#88ff88', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(11);
+    this.muteBtnBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      this.sfx.muted = !this.sfx.muted;
+      this.muteBtnText!.setText(this.sfx.muted ? '✕ OFF' : '♪ ON');
+      this.muteBtnText!.setColor(this.sfx.muted ? '#888888' : '#88ff88');
+      this.muteBtnBg!.setFillStyle(this.sfx.muted ? 0x222222 : 0x223322);
+      this.muteBtnBg!.setStrokeStyle(1, this.sfx.muted ? 0x444444 : 0x448844);
+    });
+
     // 좌상단: 내 팀 (항상 파란색)
     this.reflectorCountTexts[this.myPlayerId] = this.add.text(
-      8, 8,
+      8, 28,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
       { fontSize: '13px', color: '#4488ff', fontStyle: 'bold' },
     ).setOrigin(0, 0);

@@ -1,8 +1,10 @@
 export class SoundManager {
+  muted: boolean = false;
   private ctx: AudioContext | null = null;
   private lastPlayed: Map<string, number> = new Map();
 
   private getCtx(): AudioContext | null {
+    if (this.muted) return null;
     try {
       if (!this.ctx) {
         this.ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
@@ -177,6 +179,42 @@ export class SoundManager {
     if (!ctx) return;
     [523, 659, 784, 1047].forEach((freq, i) => {
       this.tone(ctx, freq, freq, 0.25, 'square', 0.13, i * 0.13);
+    });
+  }
+
+  /** 몬스터 피격 */
+  monsterHit(): void {
+    if (!this.canPlay('monsterHit', 80)) return;
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    this.tone(ctx, 300, 200, 0.15, 'sawtooth', 0.14);
+    this.noise(ctx, 0.1, 0.08, 1200);
+  }
+
+  /** 몬스터 처치 */
+  monsterKill(): void {
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    this.noise(ctx, 0.35, 0.2, 900);
+    this.tone(ctx, 200, 60, 0.35, 'sawtooth', 0.18);
+  }
+
+  /** 아이템 획득 */
+  itemPickup(): void {
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    [660, 880, 1100].forEach((freq, i) => {
+      this.tone(ctx, freq, freq, 0.1, 'sine', 0.12, i * 0.05);
+    });
+  }
+
+  /** 힐 효과 */
+  healEffect(): void {
+    if (!this.canPlay('heal', 100)) return;
+    const ctx = this.getCtx();
+    if (!ctx) return;
+    [440, 550].forEach((freq, i) => {
+      this.tone(ctx, freq, freq + 110, 0.18, 'sine', 0.1, i * 0.06);
     });
   }
 
