@@ -54,7 +54,7 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   maxReflectorsPerPlayer: 5,
   reflectorCooldown: 3.0,
   maxReflectorStock: 5,
-  initialReflectorStock: 2,
+  initialReflectorStock: 1,
   spawnHp: 10,
   coreHp: 10,
   maxWallsPerPlayer: 3,
@@ -263,8 +263,8 @@ export class BattleSimulator {
     // BallSimulator 배틀 모드 초기화 (bracket notation 제거)
     this.simulator.initForBattle(this.config.timePerPhase);
 
-    // 게임 시작 즉시 첫 발사
-    this.spawnAll();
+    // 첫 틱에서 바로 발사되도록 타이머를 가득 채움 (MATCH_FOUND 이후 발사 보장)
+    this.spawnTimer = this.config.spawnInterval;
   }
 
   /** delta(초) 만큼 시뮬레이션 진행 */
