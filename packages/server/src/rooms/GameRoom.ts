@@ -28,6 +28,8 @@ import {
   TimeStopEndedMsg,
   CoreHpMsg,
   CoreDestroyedMsg,
+  SpawnPhaseCompleteMsg,
+  ReflectorStockMsg,
 } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
@@ -90,8 +92,8 @@ export class GameRoom {
       this.broadcast(SocketEvent.SPAWN_HP, msg);
     };
 
-    this.simulator.onSpawnDestroyed = (spawnId) => {
-      const msg: SpawnDestroyedMsg = { spawnId };
+    this.simulator.onSpawnDestroyed = (spawnId, respawnDuration) => {
+      const msg: SpawnDestroyedMsg = { spawnId, respawnDuration };
       this.broadcast(SocketEvent.SPAWN_DESTROYED, msg);
     };
 
@@ -161,6 +163,16 @@ export class GameRoom {
       const msg: CoreDestroyedMsg = { coreId };
       this.broadcast(SocketEvent.CORE_DESTROYED, msg);
     };
+
+    this.simulator.onSpawnPhaseComplete = (phaseNumber) => {
+      const msg: SpawnPhaseCompleteMsg = { phaseNumber };
+      this.broadcast(SocketEvent.SPAWN_PHASE_COMPLETE, msg);
+    };
+
+    this.simulator.onReflectorStockChanged = (playerId, stock, cooldownElapsed) => {
+      const msg: ReflectorStockMsg = { playerId, stock, cooldownElapsed };
+      this.broadcast(SocketEvent.REFLECTOR_STOCK, msg);
+    };
   }
 
   start(): void {
@@ -194,6 +206,9 @@ export class GameRoom {
         cores,
         timePerPhase: DEFAULT_BATTLE_CONFIG.timePerPhase,
         spawnInterval: DEFAULT_BATTLE_CONFIG.spawnInterval,
+        reflectorCooldown: DEFAULT_BATTLE_CONFIG.reflectorCooldown,
+        maxReflectorStock: DEFAULT_BATTLE_CONFIG.maxReflectorStock,
+        initialReflectorStock: DEFAULT_BATTLE_CONFIG.initialReflectorStock,
       };
       this.players[i].emit(SocketEvent.MATCH_FOUND, msg);
     }

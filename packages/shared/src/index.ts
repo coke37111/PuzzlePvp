@@ -33,6 +33,8 @@ export type {
   WallPlacedMsg, WallDamagedMsg, WallDestroyedMsg,
   TimeStopStartedMsg, TimeStopEndedMsg,
   CoreHpMsg, CoreDestroyedMsg,
+  SpawnPhaseCompleteMsg,
+  ReflectorStockMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

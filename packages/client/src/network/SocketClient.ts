@@ -21,6 +21,8 @@ import {
   CoreHpMsg,
   CoreDestroyedMsg,
   SpawnRespawnedMsg,
+  SpawnPhaseCompleteMsg,
+  ReflectorStockMsg,
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
@@ -49,6 +51,8 @@ export class SocketClient {
   onTimeStopEnded?: (msg: TimeStopEndedMsg) => void;
   onCoreHp?: (msg: CoreHpMsg) => void;
   onCoreDestroyed?: (msg: CoreDestroyedMsg) => void;
+  onSpawnPhaseComplete?: (msg: SpawnPhaseCompleteMsg) => void;
+  onReflectorStock?: (msg: ReflectorStockMsg) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 
@@ -89,6 +93,8 @@ export class SocketClient {
     this.socket.on(SocketEvent.TIME_STOP_ENDED, (msg: TimeStopEndedMsg) => this.onTimeStopEnded?.(msg));
     this.socket.on(SocketEvent.CORE_HP, (msg: CoreHpMsg) => this.onCoreHp?.(msg));
     this.socket.on(SocketEvent.CORE_DESTROYED, (msg: CoreDestroyedMsg) => this.onCoreDestroyed?.(msg));
+    this.socket.on(SocketEvent.SPAWN_PHASE_COMPLETE, (msg: SpawnPhaseCompleteMsg) => this.onSpawnPhaseComplete?.(msg));
+    this.socket.on(SocketEvent.REFLECTOR_STOCK, (msg: ReflectorStockMsg) => this.onReflectorStock?.(msg));
   }
 
   get isConnected(): boolean {

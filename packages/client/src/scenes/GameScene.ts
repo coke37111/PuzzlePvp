@@ -21,6 +21,8 @@ import {
   TimeStopStartedMsg,
   CoreHpMsg,
   CoreDestroyedMsg,
+  SpawnPhaseCompleteMsg,
+  ReflectorStockMsg,
   createBattleTileRegistry,
   MapModel,
   EMPTY_TILE_INDEX,
@@ -75,6 +77,8 @@ interface SpawnVisual {
   currentHp: number;
   ownerId: number;
   destroyed: boolean;
+  countdownText: Phaser.GameObjects.Text | null;
+  countdownEvent: Phaser.Time.TimerEvent | null;
 }
 
 interface ReflectorVisual {
@@ -173,6 +177,17 @@ export class GameScene extends Phaser.Scene {
   private hoverHighlight: Phaser.GameObjects.Rectangle | null = null;
   private endingBalls: Set<number> = new Set();
   private enemyZoneTiles: Set<string> = new Set(); // "x,y" 형식
+  private enemyZoneOverlays: Map<number, Phaser.GameObjects.Rectangle[]> = new Map(); // spawnId → overlays
+  // 반사판 스톡 UI
+  private reflectorCooldown: number = 3.0;
+  private maxReflectorStock: number = 5;
+  private myReflectorStock: number = 5;
+  private myReflectorCooldownElapsed: number = 0;
+  private reflectorSlotBgs: Phaser.GameObjects.Rectangle[] = [];
+  private reflectorSlotFills: Phaser.GameObjects.Rectangle[] = [];
+  private reflectorCooldownTween: Phaser.Tweens.Tween | null = null;
+  private reflectorSlotOrigXs: number[] = [];
+  private shakeInProgress: boolean = false;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -186,6 +201,10 @@ export class GameScene extends Phaser.Scene {
     this.serverCores = data.matchData.cores || [];
     this.timePerPhase = data.matchData.timePerPhase || 0.3;
     this.spawnInterval = data.matchData.spawnInterval || 5.0;
+    this.reflectorCooldown = data.matchData.reflectorCooldown || 3.0;
+    this.maxReflectorStock = data.matchData.maxReflectorStock || 5;
+    this.myReflectorStock = data.matchData.initialReflectorStock ?? this.maxReflectorStock;
+    this.myReflectorCooldownElapsed = 0;
 
     const registry = createBattleTileRegistry();
     this.mapModel = new MapModel(registry);
@@ -210,6 +229,7 @@ export class GameScene extends Phaser.Scene {
 
     // 상태 초기화
     this.ballVisuals.clear();
+    for (const v of this.spawnVisuals.values()) this.clearSpawnCountdown(v);
     this.spawnVisuals.clear();
     this.coreVisuals.clear();
     this.reflectorVisuals.clear();
@@ -217,6 +237,7 @@ export class GameScene extends Phaser.Scene {
     this.hpTweens.clear();
     this.endingBalls.clear();
     this.enemyZoneTiles.clear();
+    this.enemyZoneOverlays.clear();
     this.hoverHighlight = null;
     this.wallMode = false;
     this.wallModeText = null;
@@ -240,6 +261,8 @@ export class GameScene extends Phaser.Scene {
     this.itemSlotTsText = null;
 
     this.drawGrid();
+    this.createReflectorStockUI();
+    this.updateReflectorStockUI(this.myReflectorStock, 0); // 초기 풀스톡 표시
     this.setupInput();
     this.setupUI();
     this.setupSocketEvents();
@@ -268,6 +291,11 @@ export class GameScene extends Phaser.Scene {
     this.socket.onTimeStopEnded = undefined;
     this.socket.onCoreHp = undefined;
     this.socket.onCoreDestroyed = undefined;
+    this.socket.onSpawnPhaseComplete = undefined;
+    this.socket.onReflectorStock = undefined;
+    this.reflectorSlotBgs = [];
+    this.reflectorSlotFills = [];
+    this.reflectorCooldownTween = null;
   }
 
   // === 그리드 그리기 ===
@@ -325,37 +353,185 @@ export class GameScene extends Phaser.Scene {
     this.drawEnemyZones();
   }
 
-  private drawEnemyZones(): void {
-    const size = this.mapData.size;
-    const drawnKeys = new Set<string>();
+  // === 반사판 스톡 UI ===
 
-    // 코어 주변만 보호 구역 (적 코어 = 설치 불가)
-    for (const core of this.serverCores) {
-      const isEnemy = core.ownerId !== this.myPlayerId;
-      if (!isEnemy) continue; // 아군 코어 주변은 오버레이 없음
+  private readonly SLOT_SIZE = 22;
+  private readonly SLOT_GAP = 4;
 
-      const color = this.getTeamColor(core.ownerId);
+  private createReflectorStockUI(): void {
+    const ox = this.gridOffsetX;
+    const oy = this.gridOffsetY;
+    this.reflectorSlotBgs = [];
+    this.reflectorSlotFills = [];
+    this.reflectorSlotOrigXs = [];
+    this.shakeInProgress = false;
 
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = core.x + dx;
-          const ny = core.y + dy;
-          if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
+    for (let i = 0; i < this.maxReflectorStock; i++) {
+      const sx = ox + i * (this.SLOT_SIZE + this.SLOT_GAP);
+      const sy = oy - this.SLOT_SIZE - 6;
 
-          const tileIdx = this.mapData.tiles[ny][nx];
-          if (tileIdx < EMPTY_TILE_INDEX) continue;
-          // 스폰/코어/블록 타일은 건너뜀
-          if (tileIdx !== 1) continue;
+      // 슬롯 배경 (어두운 색)
+      const bg = this.add.rectangle(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE, 0x111122)
+        .setOrigin(0, 0).setDepth(5);
+      // 반사판 아이콘 텍스트 (/)
+      this.add.text(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, '/', {
+        fontSize: '14px', color: '#aaaaff', fontStyle: 'bold',
+      }).setOrigin(0.5).setDepth(6);
+      // 쿨다운 필: 아이콘 위에 겹쳐서 아래→위로 채워짐 (depth 7 > icon 6)
+      const fill = this.add.rectangle(sx, sy + this.SLOT_SIZE, this.SLOT_SIZE, 0, 0x4466ff, 0.75)
+        .setOrigin(0, 0).setDepth(7)
+        .setData('slotTop', sy)
+        .setData('slotH', this.SLOT_SIZE);
 
-          const key = `${nx},${ny}`;
-          this.enemyZoneTiles.add(key);
-          if (drawnKeys.has(key)) continue;
-          drawnKeys.add(key);
-          const px = nx * TILE_SIZE + TILE_SIZE / 2;
-          const py = ny * TILE_SIZE + TILE_SIZE / 2;
-          const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
-          this.tilesLayer.add(overlay);
+      this.reflectorSlotBgs.push(bg);
+      this.reflectorSlotFills.push(fill);
+      this.reflectorSlotOrigXs.push(sx); // 흔들기 복구용 정식 X 좌표
+    }
+  }
+
+  private updateReflectorStockUI(stock: number, cooldownElapsed: number): void {
+    this.myReflectorStock = stock;
+    this.myReflectorCooldownElapsed = cooldownElapsed;
+
+    for (let i = 0; i < this.maxReflectorStock; i++) {
+      const bg = this.reflectorSlotBgs[i];
+      const fill = this.reflectorSlotFills[i];
+      if (!bg || !fill) continue;
+
+      const slotTop = fill.getData('slotTop') as number;
+      const slotH = fill.getData('slotH') as number;
+
+      if (i < stock) {
+        // 보유 슬롯: 가득 찬 상태
+        bg.setFillStyle(0x2244aa);
+        if (this.reflectorCooldownTween && (this.reflectorCooldownTween as any).targets?.includes(fill)) {
+          this.reflectorCooldownTween.stop();
         }
+        fill.y = slotTop;
+        fill.height = slotH;
+      } else if (i === stock && stock < this.maxReflectorStock) {
+        // 쿨다운 슬롯: 아래→위 채움 애니메이션
+        bg.setFillStyle(0x111122);
+        this.animateReflectorCooldown(fill, cooldownElapsed);
+      } else {
+        // 빈 슬롯
+        bg.setFillStyle(0x111122);
+        fill.y = slotTop + slotH;
+        fill.height = 0;
+      }
+    }
+  }
+
+  private animateReflectorCooldown(fill: Phaser.GameObjects.Rectangle, elapsed: number): void {
+    if (this.reflectorCooldownTween) {
+      this.reflectorCooldownTween.stop();
+      this.reflectorCooldownTween = null;
+    }
+    const slotTop = fill.getData('slotTop') as number;
+    const slotH = fill.getData('slotH') as number;
+    const startH = (elapsed / this.reflectorCooldown) * slotH;
+    // 아래→위: y = 슬롯 바닥 - startH, height = startH
+    fill.y = slotTop + slotH - startH;
+    fill.height = startH;
+    const remaining = this.reflectorCooldown - elapsed;
+    if (remaining <= 0) return;
+    this.reflectorCooldownTween = this.tweens.add({
+      targets: fill,
+      y: slotTop,
+      height: slotH,
+      duration: remaining * 1000,
+      ease: 'Linear',
+    });
+  }
+
+  private shakeReflectorStockWarning(): void {
+    if (this.shakeInProgress) return; // 이미 흔드는 중이면 무시
+    this.shakeInProgress = true;
+
+    // 붉은색으로 전환
+    for (const bg of this.reflectorSlotBgs) bg.setFillStyle(0xaa2222, 0.7);
+
+    // 좌우 흔들기: origXs는 정식 좌표(클래스 멤버)만 사용
+    let shakeCount = 0;
+    const SHAKE_DIST = 4;
+    const SHAKE_MS = 50;
+
+    const doShake = () => {
+      if (shakeCount >= 6) {
+        // 정식 좌표로 복구
+        for (let i = 0; i < this.reflectorSlotBgs.length; i++) {
+          this.reflectorSlotBgs[i].x = this.reflectorSlotOrigXs[i];
+          this.reflectorSlotFills[i].x = this.reflectorSlotOrigXs[i];
+        }
+        this.shakeInProgress = false;
+        this.updateReflectorStockUI(this.myReflectorStock, this.myReflectorCooldownElapsed);
+        return;
+      }
+      const dir = shakeCount % 2 === 0 ? SHAKE_DIST : -SHAKE_DIST;
+      for (let i = 0; i < this.reflectorSlotBgs.length; i++) {
+        this.reflectorSlotBgs[i].x = this.reflectorSlotOrigXs[i] + dir;
+        this.reflectorSlotFills[i].x = this.reflectorSlotOrigXs[i] + dir;
+      }
+      shakeCount++;
+      this.time.delayedCall(SHAKE_MS, doShake);
+    };
+    doShake();
+  }
+
+  private drawEnemyZones(): void {
+    for (const sp of this.serverSpawnPoints) {
+      if (sp.ownerId === this.myPlayerId) continue;
+      this.addEnemyZoneForSpawn(sp.id, sp.x, sp.y, sp.ownerId);
+    }
+  }
+
+  private addEnemyZoneForSpawn(spawnId: number, spawnX: number, spawnY: number, ownerId: number): void {
+    const size = this.mapData.size;
+    const color = this.getTeamColor(ownerId);
+    const overlays: Phaser.GameObjects.Rectangle[] = [];
+    const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+    for (const [dx, dy] of CARDINAL) {
+      const nx = spawnX + dx;
+      const ny = spawnY + dy;
+      if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
+      if (this.mapData.tiles[ny][nx] !== 1) continue;
+
+      const key = `${nx},${ny}`;
+      this.enemyZoneTiles.add(key);
+      const px = nx * TILE_SIZE + TILE_SIZE / 2;
+      const py = ny * TILE_SIZE + TILE_SIZE / 2;
+      const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, color, ENEMY_ZONE_ALPHA);
+      this.tilesLayer.add(overlay);
+      overlays.push(overlay);
+    }
+    this.enemyZoneOverlays.set(spawnId, overlays);
+  }
+
+  private removeEnemyZoneForSpawn(spawnId: number): void {
+    const overlays = this.enemyZoneOverlays.get(spawnId);
+    if (overlays) {
+      for (const o of overlays) o.destroy();
+      this.enemyZoneOverlays.delete(spawnId);
+    }
+    // enemyZoneTiles 재계산 (다른 스폰이 여전히 덮는 타일 유지)
+    this.rebuildEnemyZoneTiles();
+  }
+
+  private rebuildEnemyZoneTiles(): void {
+    this.enemyZoneTiles.clear();
+    const size = this.mapData.size;
+    const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    for (const sp of this.serverSpawnPoints) {
+      if (sp.ownerId === this.myPlayerId) continue;
+      // 이 스폰의 오버레이가 아직 존재하면 활성 상태
+      if (!this.enemyZoneOverlays.has(sp.id)) continue;
+      for (const [dx, dy] of CARDINAL) {
+        const nx = sp.x + dx;
+        const ny = sp.y + dy;
+        if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
+        if (this.mapData.tiles[ny][nx] !== 1) continue;
+        this.enemyZoneTiles.add(`${nx},${ny}`);
       }
     }
   }
@@ -443,6 +619,8 @@ export class GameScene extends Phaser.Scene {
       currentHp: maxHp,
       ownerId,
       destroyed: false,
+      countdownText: null,
+      countdownEvent: null,
     });
   }
 
@@ -524,6 +702,46 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private startSpawnCountdown(visual: SpawnVisual, duration: number): void {
+    if (!duration || !isFinite(duration)) return;
+
+    const px = visual.x * TILE_SIZE + TILE_SIZE / 2;
+    const py = visual.y * TILE_SIZE + TILE_SIZE / 2;
+
+    let remaining = Math.ceil(duration);
+    const text = this.add.text(px, py, String(remaining), {
+      fontSize: '18px',
+      color: '#000000',
+      stroke: '#ffffff',
+      strokeThickness: 3,
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(10);
+    this.tilesLayer.add(text);
+
+    visual.countdownText = text;
+    visual.countdownEvent = this.time.addEvent({
+      delay: 1000,
+      repeat: remaining - 1,
+      callback: () => {
+        remaining--;
+        if (remaining > 0) {
+          text.setText(String(remaining));
+        }
+      },
+    });
+  }
+
+  private clearSpawnCountdown(visual: SpawnVisual): void {
+    if (visual.countdownEvent) {
+      visual.countdownEvent.remove();
+      visual.countdownEvent = null;
+    }
+    if (visual.countdownText) {
+      visual.countdownText.destroy();
+      visual.countdownText = null;
+    }
+  }
+
   private updateSpawnHp(spawnId: number, hp: number, _ownerId: number): void {
     const visual = this.spawnVisuals.get(spawnId);
     if (!visual || visual.destroyed) return;
@@ -599,13 +817,17 @@ export class GameScene extends Phaser.Scene {
       if (this.enemyZoneTiles.has(`${gridX},${gridY}`)) return;
 
       if (!existing) {
-        // 빈 타일 → Slash 설치 (한도 초과 시 서버에서 FIFO 자동 제거)
+        // 빈 타일 → Slash 설치: 스톡 없으면 경고
+        if (this.myReflectorStock <= 0) {
+          this.shakeReflectorStockWarning();
+          return;
+        }
         this.socket.placeReflector(gridX, gridY, ReflectorType.Slash);
       } else if (existing.playerId !== this.myPlayerId) {
         // 상대 반사판 → 무시
         return;
       } else if (existing.type === ReflectorType.Slash) {
-        // Slash → Backslash
+        // Slash → Backslash: 기존 타일 교체는 스톡 소모 없음
         this.socket.placeReflector(gridX, gridY, ReflectorType.Backslash);
       } else {
         // Backslash → 제거
@@ -924,6 +1146,19 @@ export class GameScene extends Phaser.Scene {
   // === 소켓 이벤트 ===
 
   private setupSocketEvents(): void {
+    this.socket.onReflectorStock = (msg: ReflectorStockMsg) => {
+      if (msg.playerId === this.myPlayerId) {
+        this.updateReflectorStockUI(msg.stock, msg.cooldownElapsed);
+      }
+    };
+
+    this.socket.onSpawnPhaseComplete = (msg: SpawnPhaseCompleteMsg) => {
+      if (this.spawnGaugeFill) {
+        this.tweens.killTweensOf(this.spawnGaugeFill);
+        this.startSpawnGauge(msg.phaseNumber);
+      }
+    };
+
     this.socket.onBallSpawned = (msg: BallSpawnedMsg) => {
       const tile = this.mapModel.getTile(msg.x, msg.y);
       if (!tile) return;
@@ -931,10 +1166,9 @@ export class GameScene extends Phaser.Scene {
       // 종료 애니메이션 중인 같은 ID 방어
       if (this.endingBalls.has(msg.ballId)) return;
 
-      // 스폰 타이밍 게이지: 페이즈가 바뀔 때만 리셋 (서버 phaseNumber 기준)
-      if (msg.phaseNumber !== this.phaseCount && this.spawnGaugeFill) {
-        this.tweens.killTweensOf(this.spawnGaugeFill);
-        this.startSpawnGauge(msg.phaseNumber);
+      // 페이즈가 바뀌는 첫 공 → 즉시 진동 (게이지 완료 타이밍)
+      if (msg.phaseNumber !== this.phaseCount) {
+        this.phaseCount = msg.phaseNumber; // 중복 진동 방지
         this.shakeBoard();
       }
 
@@ -1015,11 +1249,22 @@ export class GameScene extends Phaser.Scene {
       visual.destroyed = true;
 
       animSpawnDestroy(this, visual.bg, visual.hpBar, visual.hpBarBg, visual.label, visual.dirArrow);
+      this.removeEnemyZoneForSpawn(msg.spawnId);
+
+      // 리스폰 카운트다운 표시
+      this.startSpawnCountdown(visual, msg.respawnDuration);
     };
 
     this.socket.onSpawnRespawned = (msg: SpawnRespawnedMsg) => {
       const visual = this.spawnVisuals.get(msg.spawnId);
       if (!visual || !visual.destroyed) return;
+
+      // 카운트다운 정리
+      this.clearSpawnCountdown(visual);
+
+      // 보호 구역 복원
+      const spInfo = this.serverSpawnPoints.find(sp => sp.id === msg.spawnId);
+      if (spInfo) this.addEnemyZoneForSpawn(spInfo.id, spInfo.x, spInfo.y, spInfo.ownerId);
 
       visual.destroyed = false;
       visual.currentHp = msg.hp;

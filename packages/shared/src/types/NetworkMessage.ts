@@ -54,8 +54,11 @@ export interface MatchFoundMsg {
   mapData: MapData;
   spawnPoints: SpawnPointInfo[];
   cores: CoreInfo[];
-  timePerPhase: number;  // 공 이동 1칸 소요시간 (초)
-  spawnInterval: number; // 공 자동 발사 주기 (초)
+  timePerPhase: number;       // 공 이동 1칸 소요시간 (초)
+  spawnInterval: number;      // 공 자동 발사 주기 (초)
+  reflectorCooldown: number;      // 반사판 1개 재생성 시간 (초)
+  maxReflectorStock: number;      // 반사판 최대 보유 수
+  initialReflectorStock: number;  // 게임 시작 초기 보유 수
 }
 
 export interface SpawnHpMsg {
@@ -66,6 +69,7 @@ export interface SpawnHpMsg {
 
 export interface SpawnDestroyedMsg {
   spawnId: number;
+  respawnDuration: number; // 리스폰까지 걸리는 초 (20, 25, 30, ...)
 }
 
 export interface SpawnRespawnedMsg {
@@ -93,6 +97,16 @@ export interface BallSpawnedMsg {
   y: number;
   direction: Direction;
   phaseNumber: number;
+}
+
+export interface SpawnPhaseCompleteMsg {
+  phaseNumber: number;
+}
+
+export interface ReflectorStockMsg {
+  playerId: number;
+  stock: number;
+  cooldownElapsed: number; // 현재 쿨다운 경과 시간 (초)
 }
 
 export interface BallMovedMsg {
@@ -170,6 +184,8 @@ export const SocketEvent = {
   REFLECTOR_PLACED: 'reflector_placed',
   REFLECTOR_REMOVED: 'reflector_removed',
   BALL_SPAWNED: 'ball_spawned',
+  SPAWN_PHASE_COMPLETE: 'spawn_phase_complete',
+  REFLECTOR_STOCK: 'reflector_stock',
   BALL_MOVED: 'ball_moved',
   BALL_ENDED: 'ball_ended',
   GAME_OVER: 'game_over',

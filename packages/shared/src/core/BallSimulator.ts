@@ -76,6 +76,13 @@ export class BallSimulator {
     }
   }
 
+  /** 배틀 모드: 인스턴스 클리어 후 페이즈 카운터만 초기화 (nextBallId 유지) */
+  resetPhaseCounters(): void {
+    this.currentPhase = 0;
+    this.totalPhaseRate = 0;
+    this.lastTileChangedPhase = -1;
+  }
+
   /** 배틀 모드용 초기화 (Start 타일에서 자동 생성하지 않음) */
   initForBattle(timePerPhase: number = 0.3, tickTime: number = 0.03): void {
     this.timePerPhase = timePerPhase;

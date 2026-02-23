@@ -36,7 +36,10 @@ export interface TimeStopEvent {
 export interface BattleConfig {
   spawnInterval: number;    // 초 단위 (기본 1.0)
   timePerPhase: number;     // 초 단위 (기본 0.3, 클수록 느림)
-  maxReflectorsPerPlayer: number;  // 플레이어당 반사판 한도 (기본 5)
+  maxReflectorsPerPlayer: number;  // 플레이어당 반사판 보드 한도 (기본 5)
+  reflectorCooldown: number;       // 반사판 1개 재생성 시간 (초, 기본 3.0)
+  maxReflectorStock: number;       // 반사판 최대 보유 수 (기본 5)
+  initialReflectorStock: number;   // 게임 시작 초기 보유 수 (기본 3)
   spawnHp: number;          // SpawnPoint 기본 HP
   coreHp: number;           // Core 기본 HP
   maxWallsPerPlayer: number;       // 플레이어당 성벽 아이템 사용 횟수 (기본 3)
@@ -46,9 +49,12 @@ export interface BattleConfig {
 }
 
 export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
-  spawnInterval:5.0,
+  spawnInterval: 5.0,
   timePerPhase: 0.2,
   maxReflectorsPerPlayer: 5,
+  reflectorCooldown: 3.0,
+  maxReflectorStock: 5,
+  initialReflectorStock: 2,
   spawnHp: 10,
   coreHp: 10,
   maxWallsPerPlayer: 3,
@@ -85,7 +91,11 @@ export class BattleSimulator {
   get phaseNumber(): number { return this._phaseNumber; }
   private pendingSpawnQueue: Array<{ tile: TileModel; direction: Direction; ownerId: number }> = [];
   private pendingSpawnTimer: number = 0;
+  private spawnQueueActive: boolean = false; // 공 발사 큐가 소진될 때까지 타이머 멈춤
   private static readonly SPAWN_FIRE_INTERVAL = 0.2;
+  // 반사판 스톡 & 쿨다운
+  private reflectorStocks: Map<number, number> = new Map();   // playerId → stock
+  private reflectorCooldownTimers: Map<number, number> = new Map(); // playerId → elapsed(초)
   private reflectorQueues: Map<number, number[]> = new Map();  // playerId → [tileIndex, ...]
   private nextSpawnPointId: number = 1;
   private nextCoreId: number = 1;
@@ -99,11 +109,14 @@ export class BattleSimulator {
 
   // 스폰 리스폰 타이머 (spawnId → 남은 초)
   private spawnRespawnTimers: Map<number, number> = new Map();
-  static readonly SPAWN_RESPAWN_DELAY = 20;
+  // 스폰 파괴 횟수 (spawnId → 횟수) — 리스폰 시간 계산용
+  private spawnDestroyCount: Map<number, number> = new Map();
+  static readonly SPAWN_RESPAWN_BASE = 20;   // 첫 파괴: 20초
+  static readonly SPAWN_RESPAWN_INC  = 5;    // 이후 매 파괴마다 +5초
 
   // 이벤트
   onSpawnHpChanged?: (event: SpawnEvent) => void;
-  onSpawnDestroyed?: (spawnId: number) => void;
+  onSpawnDestroyed?: (spawnId: number, respawnDuration: number) => void;
   onSpawnRespawned?: (spawnId: number, hp: number) => void;
   onReflectorPlaced?: (placement: ReflectorPlacement) => void;
   onReflectorRemoved?: (x: number, y: number, playerId: number) => void;
@@ -118,6 +131,8 @@ export class BattleSimulator {
   onTimeStopEnded?: () => void;
   onCoreHpChanged?: (event: CoreEvent) => void;
   onCoreDestroyed?: (coreId: number) => void;
+  onSpawnPhaseComplete?: (phaseNumber: number) => void;
+  onReflectorStockChanged?: (playerId: number, stock: number, cooldownElapsed: number) => void;
 
   constructor(map: MapModel, config: Partial<BattleConfig> = {}) {
     this.map = map;
@@ -154,6 +169,15 @@ export class BattleSimulator {
     this._phaseNumber = 0;
     this.pendingSpawnQueue = [];
     this.pendingSpawnTimer = 0;
+    this.spawnQueueActive = false;
+    this.spawnRespawnTimers.clear();
+    this.spawnDestroyCount.clear();
+    this.reflectorStocks.clear();
+    this.reflectorCooldownTimers.clear();
+    for (const playerId of this.reflectorQueues.keys()) {
+      this.reflectorStocks.set(playerId, this.config.initialReflectorStock);
+      this.reflectorCooldownTimers.set(playerId, 0);
+    }
     this.isRunning = true;
 
     // 스타트 타일에서 SpawnPoint 생성
@@ -202,8 +226,11 @@ export class BattleSimulator {
       if (sp && sp.active) {
         sp.damage();
         if (!sp.active) {
-          this.onSpawnDestroyed?.(sp.id);
-          this.spawnRespawnTimers.set(sp.id, BattleSimulator.SPAWN_RESPAWN_DELAY);
+          const count = (this.spawnDestroyCount.get(sp.id) ?? 0) + 1;
+          this.spawnDestroyCount.set(sp.id, count);
+          const respawnDelay = BattleSimulator.SPAWN_RESPAWN_BASE + (count - 1) * BattleSimulator.SPAWN_RESPAWN_INC;
+          this.spawnRespawnTimers.set(sp.id, respawnDelay);
+          this.onSpawnDestroyed?.(sp.id, respawnDelay);
         }
         this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
         return true; // 공 캡처
@@ -226,9 +253,6 @@ export class BattleSimulator {
 
     // BallSimulator 배틀 모드 초기화 (bracket notation 제거)
     this.simulator.initForBattle(this.config.timePerPhase);
-
-    // 초기 스폰
-    this.spawnAll();
   }
 
   /** delta(초) 만큼 시뮬레이션 진행 */
@@ -248,9 +272,10 @@ export class BattleSimulator {
     // 공 시뮬레이션 진행 (인스턴스 없어도 timer는 계속)
     if (this.simulator.instances.length > 0) {
       const allEnded = this.simulator.update(delta);
-      // 종료된 인스턴스 정리 (메모리 누적 방지)
+      // 종료된 인스턴스 정리 + 페이즈 카운터 리셋 (maxPhaseLimit 초과 방지)
       if (allEnded) {
         this.simulator.instances = [];
+        this.simulator.resetPhaseCounters();
       }
     }
 
@@ -262,13 +287,44 @@ export class BattleSimulator {
         const next = this.pendingSpawnQueue.shift()!;
         this.simulator.spawnBall(next.tile, next.direction, next.ownerId);
       }
+      // 큐가 방금 비워졌으면 → 타이머 시작 신호
+      if (this.pendingSpawnQueue.length === 0 && this.spawnQueueActive) {
+        this.spawnQueueActive = false;
+        this.spawnTimer = 0;
+        this.onSpawnPhaseComplete?.(this._phaseNumber);
+      }
     }
 
-    // 스폰 타이머
-    this.spawnTimer += delta;
-    if (this.spawnTimer >= this.config.spawnInterval) {
-      this.spawnTimer -= this.config.spawnInterval;
-      this.spawnAll();
+    // 스폰 타이머: 큐가 비어있을 때만 진행
+    if (!this.spawnQueueActive) {
+      this.spawnTimer += delta;
+      if (this.spawnTimer >= this.config.spawnInterval) {
+        this.spawnTimer = 0;
+        this.spawnAll();
+      }
+    }
+
+    // 반사판 쿨다운 타이머
+    for (const [playerId, elapsed] of this.reflectorCooldownTimers) {
+      const stock = this.reflectorStocks.get(playerId) ?? 0;
+      if (stock >= this.config.maxReflectorStock) {
+        // 스톡이 가득 차면 타이머 정지
+        if (elapsed !== 0) {
+          this.reflectorCooldownTimers.set(playerId, 0);
+          this.onReflectorStockChanged?.(playerId, stock, 0);
+        }
+        continue;
+      }
+      const newElapsed = elapsed + delta;
+      if (newElapsed >= this.config.reflectorCooldown) {
+        const newStock = stock + 1;
+        this.reflectorStocks.set(playerId, newStock);
+        const carry = newElapsed - this.config.reflectorCooldown;
+        this.reflectorCooldownTimers.set(playerId, newStock >= this.config.maxReflectorStock ? 0 : carry);
+        this.onReflectorStockChanged?.(playerId, newStock, carry);
+      } else {
+        this.reflectorCooldownTimers.set(playerId, newElapsed);
+      }
     }
 
     // 스폰 리스폰 타이머
@@ -305,6 +361,16 @@ export class BattleSimulator {
         }
       }
     }
+
+    if (this.pendingSpawnQueue.length > 0) {
+      // 큐가 있으면: 큐가 소진될 때까지 타이머 중단
+      this.spawnQueueActive = true;
+    } else {
+      // 큐가 없으면(공 1개 또는 스폰포인트 없음): 즉시 완료
+      this.spawnQueueActive = false;
+      this.spawnTimer = 0;
+      this.onSpawnPhaseComplete?.(this._phaseNumber);
+    }
   }
 
   private checkWinCondition(): void {
@@ -324,23 +390,32 @@ export class BattleSimulator {
   }
 
   /** 반사판 배치 (플레이어 큐 FIFO 관리) */
-  /** (x,y)가 playerId에게 적 코어 인접 1칸인지 확인 */
-  isEnemyCoreZone(playerId: number, x: number, y: number): boolean {
-    for (const core of this.cores) {
-      if (core.ownerId === playerId) continue; // 아군 코어는 무시
-      if (Math.abs(core.tile.x - x) <= 1 && Math.abs(core.tile.y - y) <= 1) return true;
+  /** (x,y)가 playerId에게 적 스폰타일 상하좌우 인접 1칸인지 확인 */
+  isEnemySpawnZone(playerId: number, x: number, y: number): boolean {
+    for (const sp of this.spawnPoints) {
+      if (sp.ownerId === playerId) continue; // 아군 스폰은 무시
+      if (!sp.active) continue; // 파괴된 스폰은 보호 구역 없음
+      const dx = Math.abs(sp.tile.x - x);
+      const dy = Math.abs(sp.tile.y - y);
+      if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) return true; // 상하좌우만
     }
     return false;
   }
 
   placeReflector(playerId: number, x: number, y: number, type: ReflectorType): boolean {
-    if (this.isEnemyCoreZone(playerId, x, y)) return false;
+    if (this.isEnemySpawnZone(playerId, x, y)) return false;
 
     const queue = this.reflectorQueues.get(playerId)!;
     const tileIndex = x + y * 100;
     const isReplacing = queue.includes(tileIndex);
 
-    // 한도 초과 시 가장 오래된 반사판 자동 제거 (FIFO)
+    // 새 배치는 스톡 필요
+    if (!isReplacing) {
+      const stock = this.reflectorStocks.get(playerId) ?? 0;
+      if (stock <= 0) return false;
+    }
+
+    // 보드 한도 초과 시 가장 오래된 반사판 자동 제거 (FIFO)
     if (!isReplacing && queue.length >= this.config.maxReflectorsPerPlayer) {
       const oldestIndex = queue.shift()!;
       const ox = oldestIndex % 100;
@@ -352,7 +427,14 @@ export class BattleSimulator {
     const success = this.map.placeReflector(x, y, type, playerId);
     if (!success) return false;
 
-    if (!isReplacing) queue.push(tileIndex);
+    if (!isReplacing) {
+      queue.push(tileIndex);
+      // 스톡 차감
+      const newStock = (this.reflectorStocks.get(playerId) ?? 1) - 1;
+      this.reflectorStocks.set(playerId, newStock);
+      const elapsed = this.reflectorCooldownTimers.get(playerId) ?? 0;
+      this.onReflectorStockChanged?.(playerId, newStock, elapsed);
+    }
 
     // 해당 타일에 있는 공의 방향 즉시 재계산 (입사 방향 기준으로 올바르게 계산)
     for (const inst of this.simulator.instances) {
