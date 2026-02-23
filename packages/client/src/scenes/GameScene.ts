@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { SocketClient } from '../network/SocketClient';
 import {
+  MovingWallMovedMsg,
   MatchFoundMsg,
   SpawnPointInfo,
   CoreInfo,
@@ -193,6 +194,8 @@ export class GameScene extends Phaser.Scene {
   private reflectorSlotOrigXs: number[] = [];
   private shakeInProgress: boolean = false;
   private sfx!: SoundManager;
+  private movingWallContainer: Phaser.GameObjects.Container | null = null;
+  private _movingWallInitPos: { x: number; y: number } | null = null;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -210,6 +213,7 @@ export class GameScene extends Phaser.Scene {
     this.maxReflectorStock = data.matchData.maxReflectorStock || 5;
     this.myReflectorStock = data.matchData.initialReflectorStock ?? this.maxReflectorStock;
     this.myReflectorCooldownElapsed = 0;
+    this._movingWallInitPos = data.matchData.movingWall ?? null;
 
     const registry = createBattleTileRegistry();
     this.mapModel = new MapModel(registry);
@@ -267,8 +271,12 @@ export class GameScene extends Phaser.Scene {
     this.itemSlotTsText = null;
 
     this.sfx = new SoundManager();
+    this.movingWallContainer = null;
 
     this.drawGrid();
+    if (this._movingWallInitPos) {
+      this.drawMovingWall(this._movingWallInitPos.x, this._movingWallInitPos.y);
+    }
     this.createReflectorStockUI();
     this.updateReflectorStockUI(this.myReflectorStock, 0); // 초기 풀스톡 표시
     this.setupInput();
@@ -301,6 +309,7 @@ export class GameScene extends Phaser.Scene {
     this.socket.onCoreDestroyed = undefined;
     this.socket.onSpawnPhaseComplete = undefined;
     this.socket.onReflectorStock = undefined;
+    this.socket.onMovingWallMoved = undefined;
     this.reflectorSlotBgs = [];
     this.reflectorSlotFills = [];
     this.reflectorCooldownTween = null;
@@ -1385,6 +1394,10 @@ export class GameScene extends Phaser.Scene {
       this.hideTimeStop();
     };
 
+    this.socket.onMovingWallMoved = (msg: MovingWallMovedMsg) => {
+      this.moveMovingWall(msg.toX, msg.toY);
+    };
+
     this.socket.onDisconnected = () => {
       this.add.text(
         this.scale.width / 2, this.scale.height / 2,
@@ -1392,6 +1405,47 @@ export class GameScene extends Phaser.Scene {
         { fontSize: '20px', color: '#ff4444' },
       ).setOrigin(0.5);
     };
+  }
+
+  private drawMovingWall(gridX: number, gridY: number): void {
+    if (this.movingWallContainer) {
+      this.movingWallContainer.destroy();
+    }
+
+    const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+    const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+    const half = TILE_SIZE / 2 - 1;
+    const m = 7;
+
+    const bg = this.add.rectangle(0, 0, TILE_SIZE - 2, TILE_SIZE - 2, 0x223344, 1.0);
+    const g = this.add.graphics();
+    g.lineStyle(3, 0xffcc00, 0.9);
+    g.lineBetween(-half + m, -half + m, half - m, half - m);
+    g.lineBetween(half - m, -half + m, -half + m, half - m);
+    g.lineStyle(1, 0xffcc00, 0.4);
+    g.strokeRect(-half, -half, TILE_SIZE - 2, TILE_SIZE - 2);
+
+    const container = this.add.container(px, py, [bg, g]);
+    container.setDepth(4);
+    this.tilesLayer.add(container);
+    this.movingWallContainer = container;
+  }
+
+  private moveMovingWall(toGridX: number, toGridY: number): void {
+    if (!this.movingWallContainer) {
+      this.drawMovingWall(toGridX, toGridY);
+      return;
+    }
+    const toX = toGridX * TILE_SIZE + TILE_SIZE / 2;
+    const toY = toGridY * TILE_SIZE + TILE_SIZE / 2;
+    this.tweens.killTweensOf(this.movingWallContainer);
+    this.tweens.add({
+      targets: this.movingWallContainer,
+      x: toX,
+      y: toY,
+      duration: 200,
+      ease: 'Back.easeOut',
+    });
   }
 
   /** 자기 팀은 항상 파란색, 상대는 빨간색으로 반환 */

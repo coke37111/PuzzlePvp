@@ -130,6 +130,13 @@ export class BattleSimulator {
   onCoreDestroyed?: (coreId: number) => void;
   onSpawnPhaseComplete?: (phaseNumber: number) => void;
   onReflectorStockChanged?: (playerId: number, stock: number, cooldownElapsed: number) => void;
+  onMovingWallMoved?: (fromX: number, fromY: number, toX: number, toY: number) => void;
+
+  private movingWall: { x: number; y: number } | null = null;
+
+  getMovingWall(): { x: number; y: number } | null {
+    return this.movingWall ? { ...this.movingWall } : null;
+  }
 
   constructor(map: MapModel, config: Partial<BattleConfig> = {}) {
     this.map = map;
@@ -194,6 +201,9 @@ export class BattleSimulator {
       this.cores.push(core);
     }
 
+    // 무빙 월 초기 위치 설정
+    this.movingWall = this.pickRandomEmptyTile();
+
     // BallSimulator 이벤트 연결
     this.simulator.onBallCreated = (ball, dir) => this.onBallCreated?.(ball, dir);
     this.simulator.onBallMoved = (ball, from, to) => this.onBallMoved?.(ball, from, to);
@@ -201,6 +211,11 @@ export class BattleSimulator {
 
     // 공이 타일에 도착할 때 SpawnPoint/Wall 체크
     this.simulator.onBallArrivedAtTile = (ball, tile) => {
+      // 무빙 월 체크 (부딪히면 공 소멸, 벽은 유지)
+      if (this.movingWall && tile.x === this.movingWall.x && tile.y === this.movingWall.y) {
+        return true;
+      }
+
       // 성벽 체크
       const wallKey = `${tile.x},${tile.y}`;
       const wall = this.walls.get(wallKey);
@@ -326,6 +341,16 @@ export class BattleSimulator {
     this._phaseNumber++;
     const ballCount = Math.floor(this._phaseNumber / 10) + 1;
 
+    // 무빙 월 이동 (공 발사 직전)
+    if (this.movingWall) {
+      const prev = this.movingWall;
+      const next = this.pickRandomEmptyTile();
+      if (next) {
+        this.movingWall = next;
+        this.onMovingWallMoved?.(prev.x, prev.y, next.x, next.y);
+      }
+    }
+
     // 속도 점진 증가: 1턴=2배 느림, 10턴마다 10% 빨라져 10턴 후 정상 속도
     const ramp = BattleSimulator.SPEED_RAMP_TURNS;
     const t = this.config.timePerPhase;
@@ -341,6 +366,35 @@ export class BattleSimulator {
     }
 
     this.onSpawnPhaseComplete?.(this._phaseNumber);
+  }
+
+  private pickRandomEmptyTile(): { x: number; y: number } | null {
+    const size = this.map.size;
+    const occupied = new Set<string>();
+    const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    for (const sp of this.spawnPoints) {
+      occupied.add(`${sp.tile.x},${sp.tile.y}`);
+      // 스폰 타일 상하좌우 인접 타일도 제외
+      for (const [dx, dy] of CARDINAL) {
+        occupied.add(`${sp.tile.x + dx},${sp.tile.y + dy}`);
+      }
+    }
+    for (const core of this.cores) occupied.add(`${core.tile.x},${core.tile.y}`);
+    for (const key of this.walls.keys()) occupied.add(key);
+    if (this.movingWall) occupied.add(`${this.movingWall.x},${this.movingWall.y}`);
+
+    const candidates: { x: number; y: number }[] = [];
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const tile = this.map.getTile(x, y);
+        if (!tile || !tile.isReflectorSetable) continue;
+        if (occupied.has(`${x},${y}`)) continue;
+        if (this.map.reflectors.has(x + y * 100)) continue;
+        candidates.push({ x, y });
+      }
+    }
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
   private checkWinCondition(): void {

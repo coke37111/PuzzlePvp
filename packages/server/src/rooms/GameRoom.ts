@@ -30,6 +30,7 @@ import {
   CoreDestroyedMsg,
   SpawnPhaseCompleteMsg,
   ReflectorStockMsg,
+  MovingWallMovedMsg,
 } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
@@ -173,6 +174,11 @@ export class GameRoom {
       const msg: ReflectorStockMsg = { playerId, stock, cooldownElapsed };
       this.broadcast(SocketEvent.REFLECTOR_STOCK, msg);
     };
+
+    this.simulator.onMovingWallMoved = (fromX, fromY, toX, toY) => {
+      const msg: MovingWallMovedMsg = { fromX, fromY, toX, toY };
+      this.broadcast(SocketEvent.MOVING_WALL_MOVED, msg);
+    };
   }
 
   start(): void {
@@ -197,6 +203,7 @@ export class GameRoom {
       maxHp: c.maxHp,
     }));
 
+    const movingWall = this.simulator.getMovingWall() ?? undefined;
     for (let i = 0; i < 2; i++) {
       const msg: MatchFoundMsg = {
         roomId: this.id,
@@ -209,6 +216,7 @@ export class GameRoom {
         reflectorCooldown: DEFAULT_BATTLE_CONFIG.reflectorCooldown,
         maxReflectorStock: DEFAULT_BATTLE_CONFIG.maxReflectorStock,
         initialReflectorStock: DEFAULT_BATTLE_CONFIG.initialReflectorStock,
+        movingWall,
       };
       this.players[i].emit(SocketEvent.MATCH_FOUND, msg);
     }

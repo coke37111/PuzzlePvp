@@ -35,6 +35,7 @@ export type {
   CoreHpMsg, CoreDestroyedMsg,
   SpawnPhaseCompleteMsg,
   ReflectorStockMsg,
+  MovingWallMovedMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

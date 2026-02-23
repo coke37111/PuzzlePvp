@@ -59,6 +59,14 @@ export interface MatchFoundMsg {
   reflectorCooldown: number;      // 반사판 1개 재생성 시간 (초)
   maxReflectorStock: number;      // 반사판 최대 보유 수
   initialReflectorStock: number;  // 게임 시작 초기 보유 수
+  movingWall?: { x: number; y: number }; // 무빙 월 초기 위치
+}
+
+export interface MovingWallMovedMsg {
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
 }
 
 export interface SpawnHpMsg {
@@ -196,4 +204,5 @@ export const SocketEvent = {
   TIME_STOP_ENDED: 'time_stop_ended',
   CORE_HP: 'core_hp',
   CORE_DESTROYED: 'core_destroyed',
+  MOVING_WALL_MOVED: 'moving_wall_moved',
 } as const;
