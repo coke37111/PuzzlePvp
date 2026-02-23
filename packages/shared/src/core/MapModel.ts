@@ -5,7 +5,8 @@ import { TileType } from '../enums/TileType';
 import { Direction } from '../enums/Direction';
 
 export interface MapData {
-  size: number;
+  width: number;
+  height: number;
   /** tiles[y][x] = TileData uniqueIndex */
   tiles: number[][];
   /** Portal 연결: portalGroupId → [tile1Index, tile2Index] */
@@ -20,7 +21,8 @@ export interface ReflectorPlacement {
 }
 
 export class MapModel {
-  size: number;
+  width: number;
+  height: number;
   tiles: Map<number, TileModel> = new Map();  // key = index (x + y*100)
   reflectors: Map<number, ReflectorPlacement> = new Map();  // key = index
   linkedPortals: Map<TileModel, TileModel> = new Map();
@@ -30,17 +32,19 @@ export class MapModel {
 
   constructor(tileRegistry: Map<number, TileData>) {
     this.tileRegistry = tileRegistry;
-    this.size = 0;
+    this.width = 0;
+    this.height = 0;
   }
 
   load(mapData: MapData): void {
-    this.size = mapData.size;
+    this.width = mapData.width;
+    this.height = mapData.height;
     this.tiles.clear();
     this.reflectors.clear();
     this.linkedPortals.clear();
 
-    for (let y = 0; y < mapData.size; y++) {
-      for (let x = 0; x < mapData.size; x++) {
+    for (let y = 0; y < mapData.height; y++) {
+      for (let x = 0; x < mapData.width; x++) {
         const tileIndex = mapData.tiles[y][x];
         if (tileIndex < EMPTY_TILE_INDEX) continue;
 
@@ -79,7 +83,7 @@ export class MapModel {
   }
 
   getTile(x: number, y: number): TileModel | undefined {
-    if (x < 0 || x >= this.size || y < 0 || y >= this.size) return undefined;
+    if (x < 0 || x >= this.width || y < 0 || y >= this.height) return undefined;
     return this.tiles.get(x + y * 100);
   }
 
@@ -124,7 +128,7 @@ export class MapModel {
   }
 }
 
-// 배틀용 기본 맵 생성 (9x9)
+// 배틀용 기본 맵 생성 (13x9)
 export function createBattleMap(tileRegistry: Map<number, TileData>): MapModel {
   const mapModel = new MapModel(tileRegistry);
   mapModel.load(createDefaultBattleMapData());
@@ -132,33 +136,34 @@ export function createBattleMap(tileRegistry: Map<number, TileData>): MapModel {
 }
 
 export function createDefaultBattleMapData(): MapData {
-  const SIZE = 9;
+  const WIDTH = 13;
+  const HEIGHT = 9;
   // TileRegistry의 TILE_INDEX와 일치:
   // 1=Empty, 2=StartRight(P1), 3=StartLeft(P2), 4=StartUp(P1), 5=StartDown(P2)
   // 6=CoreP1, 7=Block, 8=CoreP2
-  // P1 스폰: (1,5) 위쪽 발사, (3,7) 오른쪽 발사
-  // P2 스폰: (5,1) 왼쪽 발사, (7,3) 아래쪽 발사
-  // P1 코어: (1,7), P2 코어: (7,1)
+  // P1 스폰: (3,5) 위쪽 발사, (5,7) 오른쪽 발사
+  // P2 스폰: (7,1) 왼쪽 발사, (9,3) 아래쪽 발사
+  // P1 코어: (3,7), P2 코어: (9,1)
   const E  = 1; // Empty (반사판 설치 가능)
-  const SR = 2; // Start Right (P1, 오른쪽 발사) - (3,7)
-  const SL = 3; // Start Left  (P2, 왼쪽 발사)  - (5,1)
-  const SU = 4; // Start Up    (P1, 위쪽 발사)   - (1,5)
-  const SD = 5; // Start Down  (P2, 아래쪽 발사) - (7,3)
-  const C1 = 6; // Core P1                       - (1,7)
-  const C2 = 8; // Core P2                       - (7,1)
+  const SR = 2; // Start Right (P1, 오른쪽 발사) - (5,7)
+  const SL = 3; // Start Left  (P2, 왼쪽 발사)  - (7,1)
+  const SU = 4; // Start Up    (P1, 위쪽 발사)   - (3,5)
+  const SD = 5; // Start Down  (P2, 아래쪽 발사) - (9,3)
+  const C1 = 6; // Core P1                       - (3,7)
+  const C2 = 8; // Core P2                       - (9,1)
 
   const tiles: number[][] = [
-    // y=0  x=0  x=1  x=2  x=3  x=4  x=5  x=6  x=7  x=8
-    /*y=0*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=1*/ [E,   E,   E,   E,   E,   SL,  E,   C2,  E  ],
-    /*y=2*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=3*/ [E,   E,   E,   E,   E,   E,   E,   SD,  E  ],
-    /*y=4*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=5*/ [E,   SU,  E,   E,   E,   E,   E,   E,   E  ],
-    /*y=6*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=7*/ [E,   C1,  E,   SR,  E,   E,   E,   E,   E  ],
-    /*y=8*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    // x=  0    1    2    3    4    5    6    7    8    9   10   11   12
+    /*y=0*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=1*/ [E,   E,   E,   E,   E,   E,   E,   SL,  E,   C2,  E,   E,   E  ],
+    /*y=2*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=3*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   SD,  E,   E,   E  ],
+    /*y=4*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=5*/ [E,   E,   E,   SU,  E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=6*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=7*/ [E,   E,   E,   C1,  E,   SR,  E,   E,   E,   E,   E,   E,   E  ],
+    /*y=8*/ [E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E,   E  ],
   ];
 
-  return { size: SIZE, tiles };
+  return { width: WIDTH, height: HEIGHT, tiles };
 }

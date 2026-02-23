@@ -49,7 +49,7 @@ export class BallSimulator {
 
   constructor(map: MapModel) {
     this.map = map;
-    this.maxPhaseLimit = Math.max(DEFAULT_MAX_PHASE_LIMIT, map.size * map.size * 10);
+    this.maxPhaseLimit = Math.max(DEFAULT_MAX_PHASE_LIMIT, map.width * map.height * 10);
   }
 
   init(timePerPhase: number = 0.25, tickTime: number = 0.03): void {

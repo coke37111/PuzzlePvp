@@ -8,17 +8,17 @@ export function drawGridLines(
   container: Phaser.GameObjects.Container,
   mapData: MapData,
 ): void {
-  const size = mapData.size;
+  const { width, height } = mapData;
   const g = scene.add.graphics();
   g.lineStyle(1, GRID_LINE_COLOR, GRID_LINE_ALPHA);
 
   const hasTile = (x: number, y: number): boolean =>
-    x >= 0 && x < size && y >= 0 && y < size && mapData.tiles[y][x] >= EMPTY_TILE_INDEX;
+    x >= 0 && x < width && y >= 0 && y < height && mapData.tiles[y][x] >= EMPTY_TILE_INDEX;
 
   // 가로 라인 (타일 위/아래 경계)
-  for (let y = 0; y <= size; y++) {
+  for (let y = 0; y <= height; y++) {
     let lineStart = -1;
-    for (let x = 0; x <= size; x++) {
+    for (let x = 0; x <= width; x++) {
       const above = hasTile(x, y - 1);
       const below = hasTile(x, y);
       if (above || below) {
@@ -31,14 +31,14 @@ export function drawGridLines(
       }
     }
     if (lineStart !== -1) {
-      g.lineBetween(lineStart * TILE_SIZE, y * TILE_SIZE, size * TILE_SIZE, y * TILE_SIZE);
+      g.lineBetween(lineStart * TILE_SIZE, y * TILE_SIZE, width * TILE_SIZE, y * TILE_SIZE);
     }
   }
 
   // 세로 라인 (타일 좌/우 경계)
-  for (let x = 0; x <= size; x++) {
+  for (let x = 0; x <= width; x++) {
     let lineStart = -1;
-    for (let y = 0; y <= size; y++) {
+    for (let y = 0; y <= height; y++) {
       const left = hasTile(x - 1, y);
       const right = hasTile(x, y);
       if (left || right) {
@@ -51,7 +51,7 @@ export function drawGridLines(
       }
     }
     if (lineStart !== -1) {
-      g.lineBetween(x * TILE_SIZE, lineStart * TILE_SIZE, x * TILE_SIZE, size * TILE_SIZE);
+      g.lineBetween(x * TILE_SIZE, lineStart * TILE_SIZE, x * TILE_SIZE, height * TILE_SIZE);
     }
   }
 

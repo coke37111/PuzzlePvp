@@ -1,7 +1,16 @@
 import Phaser from 'phaser';
 import { SocketClient } from '../network/SocketClient';
 import {
-  MovingWallMovedMsg,
+  MonsterInfo,
+  MonsterSpawnedMsg,
+  MonsterDamagedMsg,
+  MonsterKilledMsg,
+  MonsterMovedMsg,
+  ItemDroppedMsg,
+  ItemPickedUpMsg,
+  BallPoweredUpMsg,
+  SpawnHealedMsg,
+  CoreHealedMsg,
   MatchFoundMsg,
   SpawnPointInfo,
   CoreInfo,
@@ -32,6 +41,8 @@ import {
 import {
   TILE_SIZE, BALL_RADIUS, HP_BAR_HEIGHT,
   PLAYER_COLORS, PLAYER_COLORS_DARK, BALL_COLOR,
+  BALL_TEAM_COLORS, BALL_POWERED_SCALE,
+  MONSTER_COLOR, MONSTER_BORDER, ITEM_COLOR,
   BG_COLOR,
   TILE_EMPTY_COLOR, TILE_P1_SPAWN_COLOR, TILE_P2_SPAWN_COLOR,
   TILE_P1_CORE_COLOR, TILE_P2_CORE_COLOR,
@@ -57,6 +68,7 @@ import {
   animSpawnRespawn,
   getHpColor,
   animDamagePopup,
+  animHealPopup,
 } from '../visual/VisualEffects';
 
 interface BallVisual {
@@ -64,6 +76,23 @@ interface BallVisual {
   shine: Phaser.GameObjects.Arc;
   ballId: number;
   ownerId: number;
+}
+
+interface MonsterVisual {
+  id: number;
+  container: Phaser.GameObjects.Container;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBarBg: Phaser.GameObjects.Rectangle;
+  hpText: Phaser.GameObjects.Text;
+  maxHp: number;
+  currentHp: number;
+}
+
+interface ItemVisual {
+  id: number;
+  container: Phaser.GameObjects.Container;
+  x: number;
+  y: number;
 }
 
 interface SpawnVisual {
@@ -114,6 +143,7 @@ interface WallVisual {
   x: number;
   y: number;
   maxHp: number;
+  currentHp: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -181,6 +211,7 @@ export class GameScene extends Phaser.Scene {
   private hpTweens: Map<string, Phaser.Tweens.Tween> = new Map();
   private hoverHighlight: Phaser.GameObjects.Rectangle | null = null;
   private endingBalls: Set<number> = new Set();
+  private playerPowerLevel: Map<number, number> = new Map();
   private enemyZoneTiles: Set<string> = new Set(); // "x,y" 형식
   private enemyZoneOverlays: Map<number, Phaser.GameObjects.Rectangle[]> = new Map(); // spawnId → overlays
   // 반사판 스톡 UI
@@ -199,8 +230,10 @@ export class GameScene extends Phaser.Scene {
   private mySpawnSlotMap: Map<number, number> = new Map(); // spawnId → locked slot index
   private slotRespawnTimerEvents: Map<number, Phaser.Time.TimerEvent> = new Map(); // slot index → timer
   private sfx!: SoundManager;
-  private movingWallContainer: Phaser.GameObjects.Container | null = null;
-  private _movingWallInitPos: { x: number; y: number } | null = null;
+  private monsterVisuals: Map<number, MonsterVisual> = new Map();
+  private itemVisuals: Map<number, ItemVisual> = new Map();
+  private _initMonsters: MonsterInfo[] = [];
+  private _initWalls: WallPlacedMsg[] = [];
 
   constructor() {
     super({ key: 'GameScene' });
@@ -222,7 +255,8 @@ export class GameScene extends Phaser.Scene {
     this.mySpawnSlotMap = new Map();
     this.slotRespawnTimerEvents = new Map();
     this.myReflectorCooldownElapsed = 0;
-    this._movingWallInitPos = data.matchData.movingWall ?? null;
+    this._initMonsters = data.matchData.monsters ?? [];
+    this._initWalls = data.matchData.walls ?? [];
 
     const registry = createBattleTileRegistry();
     this.mapModel = new MapModel(registry);
@@ -236,8 +270,8 @@ export class GameScene extends Phaser.Scene {
     const { width, height } = this.scale;
     this.add.rectangle(0, 0, width, height, BG_COLOR).setOrigin(0, 0);
 
-    const gridW = this.mapData.size * TILE_SIZE;
-    const gridH = this.mapData.size * TILE_SIZE;
+    const gridW = this.mapData.width * TILE_SIZE;
+    const gridH = this.mapData.height * TILE_SIZE;
     this.gridOffsetX = (width - gridW) / 2;
     this.gridOffsetY = (height - gridH) / 2 + 10;
 
@@ -255,6 +289,7 @@ export class GameScene extends Phaser.Scene {
     this.wallVisuals.clear();
     this.hpTweens.clear();
     this.endingBalls.clear();
+    this.playerPowerLevel.clear();
     this.enemyZoneTiles.clear();
     this.enemyZoneOverlays.clear();
     this.hoverHighlight = null;
@@ -280,12 +315,16 @@ export class GameScene extends Phaser.Scene {
     this.itemSlotTsText = null;
 
     this.sfx = new SoundManager();
-    this.movingWallContainer = null;
+    this.monsterVisuals = new Map();
+    this.itemVisuals = new Map();
 
     this.drawGrid();
     this.showCoreHighlight();
-    if (this._movingWallInitPos) {
-      this.drawMovingWall(this._movingWallInitPos.x, this._movingWallInitPos.y);
+    for (const w of this._initWalls) {
+      this.drawWall(w.x, w.y, w.hp, w.maxHp);
+    }
+    for (const m of this._initMonsters) {
+      this.drawMonster(m.id, m.x, m.y, m.hp, m.maxHp);
     }
     this.createReflectorStockUI();
     this.updateReflectorStockUI(this.myReflectorStock, 0); // 초기 풀스톡 표시
@@ -322,7 +361,17 @@ export class GameScene extends Phaser.Scene {
     this.socket.onCoreDestroyed = undefined;
     this.socket.onSpawnPhaseComplete = undefined;
     this.socket.onReflectorStock = undefined;
-    this.socket.onMovingWallMoved = undefined;
+    this.socket.onMonsterSpawned = undefined;
+    this.socket.onMonsterDamaged = undefined;
+    this.socket.onMonsterKilled = undefined;
+    this.socket.onMonsterMoved = undefined;
+    this.socket.onItemDropped = undefined;
+    this.socket.onItemPickedUp = undefined;
+    this.socket.onBallPoweredUp = undefined;
+    this.socket.onSpawnHealed = undefined;
+    this.socket.onCoreHealed = undefined;
+    this.monsterVisuals.clear();
+    this.itemVisuals.clear();
     this.reflectorSlotBgs = [];
     this.reflectorSlotFills = [];
     this.reflectorCooldownTween = null;
@@ -331,13 +380,13 @@ export class GameScene extends Phaser.Scene {
   // === 그리드 그리기 ===
 
   private drawGrid(): void {
-    const size = this.mapData.size;
+    const { width, height } = this.mapData;
 
     // 그리드 라인 (타일 뒤)
     drawGridLines(this, this.tilesLayer, this.mapData);
 
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
         const tileIdx = this.mapData.tiles[y][x];
         if (tileIdx < EMPTY_TILE_INDEX) continue;
 
@@ -568,7 +617,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private addEnemyZoneForSpawn(spawnId: number, spawnX: number, spawnY: number, ownerId: number): void {
-    const size = this.mapData.size;
+    const { width, height } = this.mapData;
     const color = this.getTeamColor(ownerId);
     const overlays: Phaser.GameObjects.Rectangle[] = [];
     const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -576,7 +625,7 @@ export class GameScene extends Phaser.Scene {
     for (const [dx, dy] of CARDINAL) {
       const nx = spawnX + dx;
       const ny = spawnY + dy;
-      if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
       if (this.mapData.tiles[ny][nx] !== 1) continue;
 
       const key = `${nx},${ny}`;
@@ -602,7 +651,7 @@ export class GameScene extends Phaser.Scene {
 
   private rebuildEnemyZoneTiles(): void {
     this.enemyZoneTiles.clear();
-    const size = this.mapData.size;
+    const { width, height } = this.mapData;
     const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     for (const sp of this.serverSpawnPoints) {
       if (sp.ownerId === this.myPlayerId) continue;
@@ -611,7 +660,7 @@ export class GameScene extends Phaser.Scene {
       for (const [dx, dy] of CARDINAL) {
         const nx = sp.x + dx;
         const ny = sp.y + dy;
-        if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
         if (this.mapData.tiles[ny][nx] !== 1) continue;
         this.enemyZoneTiles.add(`${nx},${ny}`);
       }
@@ -902,6 +951,11 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private getBallScale(playerId: number): number {
+    const level = this.playerPowerLevel.get(playerId) ?? 0;
+    return Math.min(0.5 + level * 0.05, 1.5);
+  }
+
   private clearSpawnCountdown(visual: SpawnVisual): void {
     if (visual.countdownEvent) {
       visual.countdownEvent.remove();
@@ -945,7 +999,7 @@ export class GameScene extends Phaser.Scene {
   // === 입력 처리 ===
 
   private setupInput(): void {
-    const size = this.mapData.size;
+    const { width, height } = this.mapData;
 
     // 키보드: 1=성벽모드, 2=시간정지
     this.input.keyboard?.on('keydown-ONE', () => this.toggleWallMode());
@@ -957,7 +1011,7 @@ export class GameScene extends Phaser.Scene {
       const gridX = Math.floor(localX / TILE_SIZE);
       const gridY = Math.floor(localY / TILE_SIZE);
 
-      if (gridX < 0 || gridX >= size || gridY < 0 || gridY >= size) {
+      if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) {
         // 그리드 밖 클릭 시 성벽 모드 해제
         if (this.wallMode && !_pointer.rightButtonDown()) this.setWallMode(false);
         return;
@@ -1018,7 +1072,7 @@ export class GameScene extends Phaser.Scene {
       const gridX = Math.floor(localX / TILE_SIZE);
       const gridY = Math.floor(localY / TILE_SIZE);
 
-      if (gridX < 0 || gridX >= size || gridY < 0 || gridY >= size) {
+      if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) {
         if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
         if (this.wallCursor) this.wallCursor.setVisible(false);
         return;
@@ -1361,12 +1415,14 @@ export class GameScene extends Phaser.Scene {
 
         const px = msg.fromX * TILE_SIZE + TILE_SIZE / 2;
         const py = msg.fromY * TILE_SIZE + TILE_SIZE / 2;
-        const circle = this.add.circle(px, py, BALL_RADIUS, BALL_COLOR, 0.6);
+        const isMyBall = pending.ownerId === this.myPlayerId;
+        const ballColor = BALL_TEAM_COLORS[isMyBall ? 0 : 1];
+        const circle = this.add.circle(px, py, BALL_RADIUS, ballColor, 0.85);
         this.ballsLayer.add(circle);
         const shine = this.add.circle(px, py, 4, 0xffffff, 0.4);
         this.ballsLayer.add(shine);
         this.ballVisuals.set(msg.ballId, { circle, shine, ballId: msg.ballId, ownerId: pending.ownerId });
-        animBallSpawn(this, [circle, shine]);
+        animBallSpawn(this, [circle, shine], this.getBallScale(pending.ownerId));
       }
 
       const visual = this.ballVisuals.get(msg.ballId);
@@ -1403,13 +1459,15 @@ export class GameScene extends Phaser.Scene {
       this.tweens.killTweensOf(visual.circle);
       this.tweens.killTweensOf(visual.shine);
 
+      const isMyBall = visual.ownerId === this.myPlayerId;
+      const ballColor = BALL_TEAM_COLORS[isMyBall ? 0 : 1];
       animBallEnd(
         this,
         this.ballsLayer,
         [visual.circle, visual.shine],
         visual.circle.x,
         visual.circle.y,
-        BALL_COLOR,
+        ballColor,
         () => {
           visual.circle.destroy();
           visual.shine.destroy();
@@ -1543,8 +1601,10 @@ export class GameScene extends Phaser.Scene {
 
     this.socket.onWallPlaced = (msg: WallPlacedMsg) => {
       this.drawWall(msg.x, msg.y, msg.hp, msg.maxHp);
-      // 사용한 플레이어의 성벽 카운트 감소
-      this.itemCounts.wall[msg.playerId as 0|1] = Math.max(0, this.itemCounts.wall[msg.playerId as 0|1] - 1);
+      // 사용한 플레이어의 성벽 카운트 감소 (중립 벽 -1은 무시)
+      if (msg.playerId === 0 || msg.playerId === 1) {
+        this.itemCounts.wall[msg.playerId] = Math.max(0, this.itemCounts.wall[msg.playerId] - 1);
+      }
       this.updateItemUI();
     };
 
@@ -1567,8 +1627,77 @@ export class GameScene extends Phaser.Scene {
       this.hideTimeStop();
     };
 
-    this.socket.onMovingWallMoved = (msg: MovingWallMovedMsg) => {
-      this.moveMovingWall(msg.toX, msg.toY);
+    this.socket.onMonsterSpawned = (msg: MonsterSpawnedMsg) => {
+      this.spawnMonster(msg.id, msg.x, msg.y, msg.hp, msg.maxHp);
+    };
+
+    this.socket.onMonsterDamaged = (msg: MonsterDamagedMsg) => {
+      this.damageMonster(msg.id, msg.hp, msg.maxHp);
+    };
+
+    this.socket.onMonsterKilled = (msg: MonsterKilledMsg) => {
+      this.killMonster(msg.id);
+    };
+
+    this.socket.onMonsterMoved = (msg: MonsterMovedMsg) => {
+      this.moveMonster(msg.id, msg.toX, msg.toY);
+    };
+
+    this.socket.onItemDropped = (msg: ItemDroppedMsg) => {
+      this.drawItem(msg.itemId, msg.x, msg.y);
+    };
+
+    this.socket.onItemPickedUp = (msg: ItemPickedUpMsg) => {
+      this.pickupItem(msg.itemId);
+      this.sfx.itemPickup();
+    };
+
+    this.socket.onBallPoweredUp = (msg: BallPoweredUpMsg) => {
+      const prev = this.playerPowerLevel.get(msg.playerId) ?? 0;
+      this.playerPowerLevel.set(msg.playerId, prev + 1);
+      const newScale = this.getBallScale(msg.playerId);
+      for (const visual of this.ballVisuals.values()) {
+        if (visual.ownerId !== msg.playerId) continue;
+        this.tweens.add({
+          targets: [visual.circle, visual.shine],
+          scaleX: newScale,
+          scaleY: newScale,
+          duration: 200,
+          ease: 'Back.easeOut',
+        });
+      }
+    };
+
+    this.socket.onSpawnHealed = (msg: SpawnHealedMsg) => {
+      const visual = this.spawnVisuals.get(msg.spawnId);
+      if (!visual || visual.destroyed) return;
+      visual.currentHp = msg.hp;
+      visual.maxHp = msg.maxHp;
+      visual.label.setText(String(msg.hp));
+      const ratio = msg.hp / msg.maxHp;
+      const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+      visual.hpBar.setFillStyle(getHpColor(ratio));
+      animHpBar(this, visual.hpBar, baseX, ratio, `hp_${msg.spawnId}`, this.hpTweens);
+      const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+      const popupY = visual.y * TILE_SIZE;
+      animHealPopup(this, this.tilesLayer, popupX, popupY);
+      this.sfx.healEffect();
+    };
+
+    this.socket.onCoreHealed = (msg: CoreHealedMsg) => {
+      const visual = this.coreVisuals.get(msg.coreId);
+      if (!visual || visual.destroyed) return;
+      visual.currentHp = msg.hp;
+      visual.maxHp = msg.maxHp;
+      visual.label.setText(String(msg.hp));
+      const ratio = msg.hp / msg.maxHp;
+      const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+      visual.hpBar.setFillStyle(getHpColor(ratio));
+      animHpBar(this, visual.hpBar, baseX, ratio, `core_hp_${msg.coreId}`, this.hpTweens);
+      const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
+      const popupY = visual.y * TILE_SIZE;
+      animHealPopup(this, this.tilesLayer, popupX, popupY);
+      this.sfx.healEffect();
     };
 
     this.socket.onDisconnected = () => {
@@ -1580,44 +1709,164 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
-  private drawMovingWall(gridX: number, gridY: number): void {
-    if (this.movingWallContainer) {
-      this.movingWallContainer.destroy();
+  private drawMonster(id: number, gridX: number, gridY: number, hp: number, maxHp: number): void {
+    const existing = this.monsterVisuals.get(id);
+    if (existing) {
+      existing.container.destroy();
     }
 
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
-    const half = TILE_SIZE / 2 - 1;
-    const m = 7;
+    const s = TILE_SIZE / 2 - 4;
 
-    const bg = this.add.rectangle(0, 0, TILE_SIZE - 2, TILE_SIZE - 2, 0x223344, 1.0);
+    // 주황 다이아몬드
     const g = this.add.graphics();
-    g.lineStyle(3, 0xffcc00, 0.9);
-    g.lineBetween(-half + m, -half + m, half - m, half - m);
-    g.lineBetween(half - m, -half + m, -half + m, half - m);
-    g.lineStyle(1, 0xffcc00, 0.4);
-    g.strokeRect(-half, -half, TILE_SIZE - 2, TILE_SIZE - 2);
+    g.fillStyle(MONSTER_COLOR, 0.85);
+    g.fillPoints([
+      { x: 0, y: -s },
+      { x: s, y: 0 },
+      { x: 0, y: s },
+      { x: -s, y: 0 },
+    ], true);
+    g.lineStyle(2, MONSTER_BORDER, 1);
+    g.strokePoints([
+      { x: 0, y: -s },
+      { x: s, y: 0 },
+      { x: 0, y: s },
+      { x: -s, y: 0 },
+    ], true);
 
-    const container = this.add.container(px, py, [bg, g]);
+    // HP 바 배경
+    const hpBarBg = this.add.rectangle(0, s + HP_BAR_HEIGHT + 1, TILE_SIZE - 4, HP_BAR_HEIGHT, 0x333333).setOrigin(0.5);
+    // HP 바
+    const hpBar = this.add.rectangle(0, s + HP_BAR_HEIGHT + 1, TILE_SIZE - 4, HP_BAR_HEIGHT, getHpColor(hp / maxHp)).setOrigin(0.5);
+    // HP 텍스트
+    const hpText = this.add.text(0, 0, `${hp}`, {
+      fontSize: '12px', color: '#ffffff', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 2,
+    }).setOrigin(0.5);
+
+    const container = this.add.container(px, py, [g, hpBarBg, hpBar, hpText]);
     container.setDepth(4);
     this.tilesLayer.add(container);
-    this.movingWallContainer = container;
+
+    this.monsterVisuals.set(id, { id, container, hpBar, hpBarBg, hpText, maxHp, currentHp: hp });
   }
 
-  private moveMovingWall(toGridX: number, toGridY: number): void {
-    if (!this.movingWallContainer) {
-      this.drawMovingWall(toGridX, toGridY);
-      return;
-    }
+  private moveMonster(id: number, toGridX: number, toGridY: number): void {
+    const mv = this.monsterVisuals.get(id);
+    if (!mv) return;
     const toX = toGridX * TILE_SIZE + TILE_SIZE / 2;
     const toY = toGridY * TILE_SIZE + TILE_SIZE / 2;
-    this.tweens.killTweensOf(this.movingWallContainer);
+    this.tweens.killTweensOf(mv.container);
     this.tweens.add({
-      targets: this.movingWallContainer,
+      targets: mv.container,
       x: toX,
       y: toY,
-      duration: 200,
+      duration: 300,
       ease: 'Back.easeOut',
+    });
+  }
+
+  private damageMonster(id: number, hp: number, maxHp: number): void {
+    const mv = this.monsterVisuals.get(id);
+    if (!mv) return;
+    const damage = mv.currentHp - hp;
+    mv.currentHp = hp;
+    mv.maxHp = maxHp;
+    mv.hpText.setText(`${hp}`);
+    const ratio = hp / maxHp;
+    mv.hpBar.setFillStyle(getHpColor(ratio));
+    mv.hpBar.setDisplaySize((TILE_SIZE - 4) * ratio, HP_BAR_HEIGHT);
+    this.sfx.monsterHit();
+    // 데미지 팝업
+    if (damage > 0) {
+      const cx = mv.container.x;
+      const cy = mv.container.y - TILE_SIZE / 2;
+      animDamagePopup(this, this.tilesLayer, cx, cy, damage);
+    }
+    // 빨간 플래시
+    const container = mv.container;
+    this.time.delayedCall(0, () => {
+      const flash = this.add.rectangle(0, 0, TILE_SIZE - 2, TILE_SIZE - 2, 0xff2222, 0.5);
+      container.add(flash);
+      this.time.delayedCall(120, () => flash.destroy());
+    });
+  }
+
+  private killMonster(id: number): void {
+    const mv = this.monsterVisuals.get(id);
+    if (!mv) return;
+    const container = mv.container;
+    this.sfx.monsterKill();
+    this.tweens.add({
+      targets: container,
+      scaleX: 1.4, scaleY: 1.4,
+      alpha: 0,
+      duration: 300,
+      ease: 'Quad.easeOut',
+      onComplete: () => container.destroy(),
+    });
+    this.monsterVisuals.delete(id);
+  }
+
+  private spawnMonster(id: number, gridX: number, gridY: number, hp: number, maxHp: number): void {
+    this.drawMonster(id, gridX, gridY, hp, maxHp);
+    const mv = this.monsterVisuals.get(id);
+    if (!mv) return;
+    const container = mv.container;
+    container.setAlpha(0);
+    container.setScale(0.3);
+    this.tweens.add({
+      targets: container,
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 300,
+      ease: 'Back.easeOut',
+    });
+  }
+
+  private drawItem(id: number, gridX: number, gridY: number): void {
+    const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+    const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+
+    const g = this.add.graphics();
+    g.fillStyle(ITEM_COLOR, 0.9);
+    // 위쪽 화살표: 줄기 + 삼각형 헤드
+    g.fillRect(-4, 2, 8, 10);
+    g.fillTriangle(-10, 2, 10, 2, 0, -12);
+
+    const container = this.add.container(px, py - 6, [g]);
+    container.setDepth(5);
+    this.tilesLayer.add(container);
+
+    // 부유 애니메이션
+    this.tweens.add({
+      targets: container,
+      y: py - 10,
+      duration: 700,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+
+    this.itemVisuals.set(id, { id, container, x: gridX, y: gridY });
+  }
+
+  private pickupItem(id: number): void {
+    const visual = this.itemVisuals.get(id);
+    if (!visual) return;
+    this.itemVisuals.delete(id);
+    const container = visual.container;
+    this.tweens.killTweensOf(container);
+    this.tweens.add({
+      targets: container,
+      y: container.y - 40,
+      alpha: 0,
+      duration: 400,
+      ease: 'Quad.easeOut',
+      onComplete: () => container.destroy(),
     });
   }
 
@@ -1628,6 +1877,13 @@ export class GameScene extends Phaser.Scene {
 
   private getTeamColorDark(playerId: number): number {
     return PLAYER_COLORS_DARK[playerId === this.myPlayerId ? 0 : 1];
+  }
+
+  private formatHp(n: number): string {
+    if (n >= 1_000_000_000_000) return `${Math.round(n / 1_000_000_000_000)}T`;
+    if (n >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
+    if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+    return `${n}`;
   }
 
   private drawWall(gridX: number, gridY: number, hp: number, maxHp: number): void {
@@ -1643,27 +1899,29 @@ export class GameScene extends Phaser.Scene {
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
 
-    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, WALL_COLOR, 0.85);
+    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, WALL_COLOR, 0.95);
     bg.setStrokeStyle(2, WALL_BORDER_COLOR, 1);
     this.tilesLayer.add(bg);
 
-    const hpBarBg = this.add.rectangle(px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT, TILE_SIZE - 4, HP_BAR_HEIGHT, 0x333333);
+    const hpBarBg = this.add.rectangle(px, py + TILE_SIZE / 2 - HP_BAR_HEIGHT, TILE_SIZE - 4, HP_BAR_HEIGHT, 0x333333).setOrigin(0.5);
     this.tilesLayer.add(hpBarBg);
 
     const ratio = hp / maxHp;
+    const fullWidth = TILE_SIZE - 4;
     const hpBar = this.add.rectangle(
-      px - (TILE_SIZE - 4) / 2 * (1 - ratio),
-      py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
-      (TILE_SIZE - 4) * ratio, HP_BAR_HEIGHT, WALL_BORDER_COLOR,
-    );
+      px - fullWidth / 2 * (1 - ratio),
+      py + TILE_SIZE / 2 - HP_BAR_HEIGHT,
+      fullWidth * ratio, HP_BAR_HEIGHT, WALL_BORDER_COLOR,
+    ).setOrigin(0.5);
     this.tilesLayer.add(hpBar);
 
-    const hpText = this.add.text(px, py + 2, String(hp), {
-      fontSize: '12px', color: '#ffffff', fontStyle: 'bold',
+    const hpText = this.add.text(px, py, this.formatHp(hp), {
+      fontSize: '11px', color: '#ffffff', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5);
     this.tilesLayer.add(hpText);
 
-    this.wallVisuals.set(key, { bg, hpBar, hpBarBg, hpText, x: gridX, y: gridY, maxHp });
+    this.wallVisuals.set(key, { bg, hpBar, hpBarBg, hpText, x: gridX, y: gridY, maxHp, currentHp: hp });
   }
 
   private updateWallHp(gridX: number, gridY: number, hp: number): void {
@@ -1671,11 +1929,20 @@ export class GameScene extends Phaser.Scene {
     const visual = this.wallVisuals.get(key);
     if (!visual) return;
 
+    const damage = visual.currentHp - hp;
+    visual.currentHp = hp;
+
     const ratio = hp / visual.maxHp;
     const fullWidth = TILE_SIZE - 4;
+    const px = visual.x * TILE_SIZE + TILE_SIZE / 2;
+    const py = visual.y * TILE_SIZE + TILE_SIZE / 2;
     visual.hpBar.setDisplaySize(fullWidth * ratio, HP_BAR_HEIGHT);
-    visual.hpBar.setX(visual.x * TILE_SIZE + TILE_SIZE / 2 - fullWidth / 2 * (1 - ratio));
-    visual.hpText.setText(String(hp));
+    visual.hpBar.setX(px - fullWidth / 2 * (1 - ratio));
+    visual.hpText.setText(this.formatHp(hp));
+
+    if (damage > 0) {
+      animDamagePopup(this, this.tilesLayer, px, py - TILE_SIZE / 4, damage);
+    }
   }
 
   private removeWallVisual(gridX: number, gridY: number): void {

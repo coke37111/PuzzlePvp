@@ -3,6 +3,8 @@ import { BallSimulator } from './BallSimulator';
 import { SpawnPointModel, CoreModel } from './SpawnPointModel';
 import { TileModel } from './TileModel';
 import { BallModel } from './BallModel';
+import { MonsterModel } from './MonsterModel';
+import { DroppedItemModel, DropItemType } from './ItemModel';
 import { Direction } from '../enums/Direction';
 import { ReflectorType } from '../enums/ReflectorType';
 import { EndReason } from '../enums/EndReason';
@@ -130,17 +132,31 @@ export class BattleSimulator {
   onCoreDestroyed?: (coreId: number) => void;
   onSpawnPhaseComplete?: (phaseNumber: number) => void;
   onReflectorStockChanged?: (playerId: number, stock: number, cooldownElapsed: number) => void;
-  onMovingWallMoved?: (fromX: number, fromY: number, toX: number, toY: number) => void;
+  onMonsterSpawned?: (id: number, x: number, y: number, hp: number, maxHp: number) => void;
+  onMonsterDamaged?: (id: number, hp: number, maxHp: number) => void;
+  onMonsterKilled?: (id: number, x: number, y: number) => void;
+  onMonsterMoved?: (id: number, fromX: number, fromY: number, toX: number, toY: number) => void;
+  onItemDropped?: (itemId: number, x: number, y: number, itemType: DropItemType) => void;
+  onItemPickedUp?: (itemId: number, ballId: number, ballOwnerId: number) => void;
+  onBallPoweredUp?: (ballId: number, ownerId: number) => void;
+  onSpawnHealed?: (event: { spawnId: number; hp: number; maxHp: number; ownerId: number }) => void;
+  onCoreHealed?: (event: { coreId: number; hp: number; maxHp: number; ownerId: number }) => void;
 
-  private movingWall: { x: number; y: number } | null = null;
+  private monsters: MonsterModel[][] = [[], []];
+  private monsterGeneration: number[] = [0, 0];
+  private static readonly MAX_MONSTERS_PER_ZONE = 3;
+  private nextMonsterId: number = 1;
+  private droppedItems: Map<string, DroppedItemModel> = new Map();
+  private nextItemId: number = 1;
+  private playerBasePower: number[] = [1, 1];
+
+  getMonsters(): MonsterModel[] {
+    return [...this.monsters[0], ...this.monsters[1]];
+  }
 
   // 타워별 순차 발사 큐 (spawnId → 발사 대기 목록)
   private spawnQueues: Map<number, { tile: TileModel; direction: Direction; ownerId: number }[]> = new Map();
   private lastSimPhase: number = -1; // 마지막으로 공을 발사한 시뮬레이터 페이즈
-
-  getMovingWall(): { x: number; y: number } | null {
-    return this.movingWall ? { ...this.movingWall } : null;
-  }
 
   constructor(map: MapModel, config: Partial<BattleConfig> = {}) {
     this.map = map;
@@ -162,6 +178,10 @@ export class BattleSimulator {
 
   getWall(x: number, y: number): WallState | undefined {
     return this.walls.get(`${x},${y}`);
+  }
+
+  getWalls(): WallState[] {
+    return Array.from(this.walls.values());
   }
 
   get isGameTimeStopped(): boolean {
@@ -205,26 +225,100 @@ export class BattleSimulator {
       this.cores.push(core);
     }
 
-    // 무빙 월 초기 위치 설정
-    this.movingWall = this.pickRandomEmptyTile();
+    // 몬스터 초기화
+    this.monsters = [[], []];
+    this.monsterGeneration = [0, 0];
+    this.nextMonsterId = 1;
+    this.droppedItems.clear();
+    this.nextItemId = 1;
+    this.playerBasePower = [1, 1];
+
+    // 중앙 라인(x=6) 초기 벽 배치
+    const centerWalls: { y: number; hp: number }[] = [
+      { y: 0, hp: 10_000_000 },
+      { y: 1, hp:  1_000_000 },
+      { y: 2, hp:    100_000 },
+      { y: 3, hp:     10_000 },
+      { y: 4, hp:        100 },
+      { y: 5, hp:      1_000 },
+      { y: 6, hp:     10_000 },
+      { y: 7, hp:    100_000 },
+      { y: 8, hp:  1_000_000 },
+    ];
+    for (const { y, hp } of centerWalls) {
+      const wall: WallState = { x: 6, y, hp, maxHp: hp, ownerId: -1 };
+      this.walls.set(`6,${y}`, wall);
+    }
+
+    // 각 플레이어 진영에 몬스터 3마리씩 생성
+    for (let pid = 0; pid < 2; pid++) {
+      for (let i = 0; i < BattleSimulator.MAX_MONSTERS_PER_ZONE; i++) {
+        const tile = this.pickRandomEmptyTile(pid);
+        if (tile) {
+          const m = new MonsterModel(this.nextMonsterId++, tile.x, tile.y, Math.ceil(Math.pow(1.2, this.monsterGeneration[pid])));
+          this.monsters[pid].push(m);
+          this.onMonsterSpawned?.(m.id, m.x, m.y, m.hp, m.maxHp);
+        }
+      }
+    }
 
     // BallSimulator 이벤트 연결
     this.simulator.onBallCreated = (ball, dir) => this.onBallCreated?.(ball, dir);
     this.simulator.onBallMoved = (ball, from, to) => this.onBallMoved?.(ball, from, to);
     this.simulator.onBallEnded = (ball, tile, reason) => this.onBallEnded?.(ball, tile, reason);
 
-    // 공이 타일에 도착할 때 SpawnPoint/Wall 체크
+    // 공이 타일에 도착할 때 충돌 처리
     this.simulator.onBallArrivedAtTile = (ball, tile) => {
-      // 무빙 월 체크 (부딪히면 공 소멸, 벽은 유지)
-      if (this.movingWall && tile.x === this.movingWall.x && tile.y === this.movingWall.y) {
-        return true;
+      // 1. 아이템 픽업 (공 계속 진행, 캡처 안 됨)
+      const itemKey = `${tile.x},${tile.y}`;
+      const item = this.droppedItems.get(itemKey);
+      if (item && !item.pickedUp) {
+        item.pickedUp = true;
+        this.droppedItems.delete(itemKey);
+        if (item.itemType === DropItemType.PowerUp) {
+          this.playerBasePower[ball.ownerId]++;
+          for (const inst of this.simulator.instances) {
+            if (inst.ball.ownerId === ball.ownerId) {
+              inst.ball.power = this.playerBasePower[ball.ownerId];
+            }
+          }
+          ball.power = this.playerBasePower[ball.ownerId];
+          this.onBallPoweredUp?.(ball.id, ball.ownerId);
+        }
+        this.onItemPickedUp?.(item.id, ball.id, ball.ownerId);
       }
 
-      // 성벽 체크
+      // 2. 몬스터 체크
+      for (let pid = 0; pid < 2; pid++) {
+        const idx = this.monsters[pid].findIndex(m => m.active && m.x === tile.x && m.y === tile.y);
+        if (idx === -1) continue;
+        const monster = this.monsters[pid][idx];
+        monster.damage(ball.power);
+        if (!monster.active) {
+          this.onMonsterKilled?.(monster.id, monster.x, monster.y);
+          this.spawnItemAt(monster.x, monster.y);
+          // 즉시 리젠
+          this.monsterGeneration[pid]++;
+          const newHp = Math.ceil(Math.pow(1.2, this.monsterGeneration[pid]));
+          const spawnTile = this.pickRandomEmptyTile(pid);
+          if (spawnTile) {
+            const m = new MonsterModel(this.nextMonsterId++, spawnTile.x, spawnTile.y, newHp);
+            this.monsters[pid][idx] = m;
+            this.onMonsterSpawned?.(m.id, m.x, m.y, m.hp, m.maxHp);
+          } else {
+            this.monsters[pid].splice(idx, 1); // 빈 자리 정리
+          }
+        } else {
+          this.onMonsterDamaged?.(monster.id, monster.hp, monster.maxHp);
+        }
+        return true; // 공 소멸
+      }
+
+      // 3. 성벽 체크
       const wallKey = `${tile.x},${tile.y}`;
       const wall = this.walls.get(wallKey);
       if (wall) {
-        wall.hp -= 1;
+        wall.hp -= ball.power;
         if (wall.hp <= 0) {
           this.walls.delete(wallKey);
           this.onWallDestroyed?.(tile.x, tile.y);
@@ -234,31 +328,44 @@ export class BattleSimulator {
         return true; // 공 캡처
       }
 
-      // 스폰포인트 체크
+      // 4. 스폰포인트 체크 (소유권 기반)
       const sp = this.spawnPoints.find(s => s.tile.x === tile.x && s.tile.y === tile.y);
       if (sp && sp.active) {
-        sp.damage();
-        if (!sp.active) {
-          const count = (this.spawnDestroyCount.get(sp.id) ?? 0) + 1;
-          this.spawnDestroyCount.set(sp.id, count);
-          const respawnDelay = BattleSimulator.SPAWN_RESPAWN_BASE + (count - 1) * BattleSimulator.SPAWN_RESPAWN_INC;
-          this.spawnRespawnTimers.set(sp.id, respawnDelay);
-          this.onSpawnDestroyed?.(sp.id, respawnDelay);
-          // 슬롯 감소 → 초과 반사판(마지막 배치) 제거
-          this.trimReflectorsForPlayer(sp.ownerId);
+        if (ball.ownerId === sp.ownerId) {
+          // 아군 공 → 힐
+          sp.heal(ball.power);
+          this.onSpawnHealed?.({ spawnId: sp.id, hp: sp.hp, maxHp: sp.maxHp, ownerId: sp.ownerId });
+        } else {
+          // 적 공 → 데미지
+          sp.damage(ball.power);
+          if (!sp.active) {
+            const count = (this.spawnDestroyCount.get(sp.id) ?? 0) + 1;
+            this.spawnDestroyCount.set(sp.id, count);
+            const respawnDelay = BattleSimulator.SPAWN_RESPAWN_BASE + (count - 1) * BattleSimulator.SPAWN_RESPAWN_INC;
+            this.spawnRespawnTimers.set(sp.id, respawnDelay);
+            this.onSpawnDestroyed?.(sp.id, respawnDelay);
+            this.trimReflectorsForPlayer(sp.ownerId);
+          }
+          this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
         }
-        this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
         return true; // 공 캡처
       }
 
-      // 코어 체크 (승패 결정)
+      // 5. 코어 체크 (소유권 기반)
       const core = this.cores.find(c => c.tile.x === tile.x && c.tile.y === tile.y);
       if (core && core.active) {
-        core.damage();
-        this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
-        if (!core.active) {
-          this.onCoreDestroyed?.(core.id);
-          this.checkWinCondition();
+        if (ball.ownerId === core.ownerId) {
+          // 아군 공 → 힐
+          core.heal(ball.power);
+          this.onCoreHealed?.({ coreId: core.id, hp: core.hp, maxHp: core.maxHp, ownerId: core.ownerId });
+        } else {
+          // 적 공 → 데미지
+          core.damage(ball.power);
+          this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
+          if (!core.active) {
+            this.onCoreDestroyed?.(core.id);
+            this.checkWinCondition();
+          }
         }
         return true; // 공 캡처
       }
@@ -354,13 +461,36 @@ export class BattleSimulator {
     this._phaseNumber++;
     const ballCount = Math.floor(this._phaseNumber / 5) + 1;
 
-    // 무빙 월 이동 (공 발사 직전)
-    if (this.movingWall) {
-      const prev = this.movingWall;
-      const next = this.pickRandomEmptyTile();
-      if (next) {
-        this.movingWall = next;
-        this.onMovingWallMoved?.(prev.x, prev.y, next.x, next.y);
+    // 플레이어별 모든 몬스터 이동
+    const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    const allMonsters = this.getMonsters();
+    for (let pid = 0; pid < 2; pid++) {
+      for (const monster of this.monsters[pid]) {
+        if (!monster.active) continue;
+        const validMoves: { x: number; y: number }[] = [];
+        for (const [dx, dy] of CARDINAL) {
+          const nx = monster.x + dx;
+          const ny = monster.y + dy;
+          const tile = this.map.getTile(nx, ny);
+          if (!tile || !tile.isReflectorSetable) continue;
+          if (pid === 0 && nx >= 6) continue; // P1은 x<6 유지
+          if (pid === 1 && nx <= 6) continue; // P2는 x>6 유지
+          if (this.spawnPoints.some(s => s.tile.x === nx && s.tile.y === ny)) continue;
+          if (this.cores.some(c => c.tile.x === nx && c.tile.y === ny)) continue;
+          if (this.walls.has(`${nx},${ny}`)) continue;
+          if (this.droppedItems.has(`${nx},${ny}`)) continue;
+          if (this.map.reflectors.has(nx + ny * 100)) continue;
+          if (allMonsters.some(m => m.active && m !== monster && m.x === nx && m.y === ny)) continue;
+          validMoves.push({ x: nx, y: ny });
+        }
+        if (validMoves.length > 0 && Math.random() < 0.5) {
+          const next = validMoves[Math.floor(Math.random() * validMoves.length)];
+          const fromX = monster.x;
+          const fromY = monster.y;
+          monster.x = next.x;
+          monster.y = next.y;
+          this.onMonsterMoved?.(monster.id, fromX, fromY, next.x, next.y);
+        }
       }
     }
 
@@ -394,48 +524,46 @@ export class BattleSimulator {
     for (const queue of this.spawnQueues.values()) {
       if (queue.length > 0) {
         const entry = queue.shift()!;
-        this.simulator.spawnBall(entry.tile, entry.direction, entry.ownerId);
+        const inst = this.simulator.spawnBall(entry.tile, entry.direction, entry.ownerId);
+        if (inst) inst.ball.power = this.playerBasePower[entry.ownerId];
       }
     }
   }
 
-  private pickRandomEmptyTile(): { x: number; y: number } | null {
-    const size = this.map.size;
+  private pickRandomEmptyTile(playerId: number): { x: number; y: number } | null {
+    const width = this.map.width;
+    const height = this.map.height;
     const occupied = new Set<string>();
     const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     for (const sp of this.spawnPoints) {
       occupied.add(`${sp.tile.x},${sp.tile.y}`);
-      // 스폰 타일 상하좌우 인접 타일도 제외
       for (const [dx, dy] of CARDINAL) {
         occupied.add(`${sp.tile.x + dx},${sp.tile.y + dy}`);
       }
     }
     for (const core of this.cores) occupied.add(`${core.tile.x},${core.tile.y}`);
     for (const key of this.walls.keys()) occupied.add(key);
-    if (this.movingWall) occupied.add(`${this.movingWall.x},${this.movingWall.y}`);
+    for (const key of this.droppedItems.keys()) occupied.add(key);
+    for (const m of this.getMonsters()) {
+      if (m.active) occupied.add(`${m.x},${m.y}`);
+    }
 
-    const center = (size - 1) / 2;
-    const maxDist = center;
-    const candidates: { x: number; y: number; weight: number }[] = [];
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
+    // P1(0): x=0~5, P2(1): x=7~(width-1)
+    const xMin = playerId === 0 ? 0 : 7;
+    const xMax = playerId === 0 ? 5 : width - 1;
+
+    const candidates: { x: number; y: number }[] = [];
+    for (let y = 0; y < height; y++) {
+      for (let x = xMin; x <= xMax; x++) {
         const tile = this.map.getTile(x, y);
         if (!tile || !tile.isReflectorSetable) continue;
         if (occupied.has(`${x},${y}`)) continue;
         if (this.map.reflectors.has(x + y * 100)) continue;
-        const dist = Math.max(Math.abs(x - center), Math.abs(y - center));
-        const weight = 2 - dist / maxDist;
-        candidates.push({ x, y, weight });
+        candidates.push({ x, y });
       }
     }
     if (candidates.length === 0) return null;
-    const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0);
-    let rand = Math.random() * totalWeight;
-    for (const c of candidates) {
-      rand -= c.weight;
-      if (rand <= 0) return { x: c.x, y: c.y };
-    }
-    return { x: candidates[candidates.length - 1].x, y: candidates[candidates.length - 1].y };
+    return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
   private checkWinCondition(): void {
@@ -488,6 +616,7 @@ export class BattleSimulator {
 
   placeReflector(playerId: number, x: number, y: number, type: ReflectorType): boolean {
     if (this.isEnemySpawnZone(playerId, x, y)) return false;
+    if (this.getMonsters().some(m => m.active && m.x === x && m.y === y)) return false;
 
     const queue = this.reflectorQueues.get(playerId)!;
     const tileIndex = x + y * 100;
@@ -574,6 +703,12 @@ export class BattleSimulator {
     this.timeStopRemaining = this.config.timeStopDuration;
     this.onTimeStopStarted?.({ playerId, duration: this.config.timeStopDuration });
     return true;
+  }
+
+  private spawnItemAt(x: number, y: number): void {
+    const item = new DroppedItemModel(this.nextItemId++, x, y, DropItemType.PowerUp);
+    this.droppedItems.set(`${x},${y}`, item);
+    this.onItemDropped?.(item.id, x, y, item.itemType);
   }
 
   getSpawnPoint(id: number): SpawnPointModel | undefined {
