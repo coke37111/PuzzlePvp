@@ -136,28 +136,27 @@ export function createDefaultBattleMapData(): MapData {
   // TileRegistry의 TILE_INDEX와 일치:
   // 1=Empty, 2=StartRight(P1), 3=StartLeft(P2), 4=StartUp(P1), 5=StartDown(P2)
   // 6=CoreP1, 7=Block, 8=CoreP2
-  // 기존 7x7에서 상하좌우 빈 행/열 1개씩 추가 → 좌표 +1 이동
-  // P1 스폰: (1,5) 위쪽 발사, (3,7) 오른쪽 발사
-  // P2 스폰: (5,1) 왼쪽 발사, (7,3) 아래쪽 발사
+  // P1 스폰: (1,6) 위쪽 발사, (2,7) 오른쪽 발사
+  // P2 스폰: (6,1) 왼쪽 발사, (7,2) 아래쪽 발사
   // P1 코어: (1,7), P2 코어: (7,1)
   const E  = 1; // Empty (반사판 설치 가능)
-  const SR = 2; // Start Right (P1, 오른쪽 발사) - (3,7)
-  const SL = 3; // Start Left  (P2, 왼쪽 발사)  - (5,1)
-  const SU = 4; // Start Up    (P1, 위쪽 발사)   - (1,5)
-  const SD = 5; // Start Down  (P2, 아래쪽 발사) - (7,3)
+  const SR = 2; // Start Right (P1, 오른쪽 발사) - (2,7)
+  const SL = 3; // Start Left  (P2, 왼쪽 발사)  - (6,1)
+  const SU = 4; // Start Up    (P1, 위쪽 발사)   - (1,6)
+  const SD = 5; // Start Down  (P2, 아래쪽 발사) - (7,2)
   const C1 = 6; // Core P1                       - (1,7)
   const C2 = 8; // Core P2                       - (7,1)
 
   const tiles: number[][] = [
     // y=0  x=0  x=1  x=2  x=3  x=4  x=5  x=6  x=7  x=8
     /*y=0*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=1*/ [E,   E,   E,   E,   E,   SL,  E,   C2,  E  ],
-    /*y=2*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=3*/ [E,   E,   E,   E,   E,   E,   E,   SD,  E  ],
+    /*y=1*/ [E,   E,   E,   E,   E,   E,   SL,  C2,  E  ],
+    /*y=2*/ [E,   E,   E,   E,   E,   E,   E,   SD,  E  ],
+    /*y=3*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
     /*y=4*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=5*/ [E,   SU,  E,   E,   E,   E,   E,   E,   E  ],
-    /*y=6*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
-    /*y=7*/ [E,   C1,  E,   SR,  E,   E,   E,   E,   E  ],
+    /*y=5*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
+    /*y=6*/ [E,   SU,  E,   E,   E,   E,   E,   E,   E  ],
+    /*y=7*/ [E,   C1,  SR,  E,   E,   E,   E,   E,   E  ],
     /*y=8*/ [E,   E,   E,   E,   E,   E,   E,   E,   E  ],
   ];
 

@@ -244,6 +244,8 @@ export class BattleSimulator {
           const respawnDelay = BattleSimulator.SPAWN_RESPAWN_BASE + (count - 1) * BattleSimulator.SPAWN_RESPAWN_INC;
           this.spawnRespawnTimers.set(sp.id, respawnDelay);
           this.onSpawnDestroyed?.(sp.id, respawnDelay);
+          // 슬롯 감소 → 초과 반사판(마지막 배치) 제거
+          this.trimReflectorsForPlayer(sp.ownerId);
         }
         this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
         return true; // 공 캡처
@@ -350,7 +352,7 @@ export class BattleSimulator {
 
   private spawnAll(): void {
     this._phaseNumber++;
-    const ballCount = Math.floor(this._phaseNumber / 10) + 1;
+    const ballCount = Math.floor(this._phaseNumber / 5) + 1;
 
     // 무빙 월 이동 (공 발사 직전)
     if (this.movingWall) {
@@ -452,7 +454,26 @@ export class BattleSimulator {
     }
   }
 
-  /** 반사판 배치 (플레이어 큐 FIFO 관리) */
+  /** 현재 유효 반사판 최대 슬롯 (파괴된 아군 스폰 수만큼 감소) */
+  getEffectiveMaxReflectors(playerId: number): number {
+    const destroyed = this.spawnPoints.filter(sp => sp.ownerId === playerId && !sp.active).length;
+    return Math.max(0, this.config.maxReflectorsPerPlayer - destroyed);
+  }
+
+  /** 타워 파괴 시 초과 반사판(마지막 배치순) 제거 */
+  private trimReflectorsForPlayer(playerId: number): void {
+    const queue = this.reflectorQueues.get(playerId);
+    if (!queue) return;
+    const effectiveMax = this.getEffectiveMaxReflectors(playerId);
+    while (queue.length > effectiveMax) {
+      const removedIndex = queue.pop()!;
+      const rx = removedIndex % 100;
+      const ry = Math.floor(removedIndex / 100);
+      const removed = this.map.removeReflector(rx, ry);
+      if (removed) this.onReflectorRemoved?.(rx, ry, playerId);
+    }
+  }
+
   /** (x,y)가 playerId에게 적 스폰타일 상하좌우 인접 1칸인지 확인 */
   isEnemySpawnZone(playerId: number, x: number, y: number): boolean {
     for (const sp of this.spawnPoints) {
@@ -479,7 +500,7 @@ export class BattleSimulator {
     }
 
     // 보드 한도 초과 시 가장 오래된 반사판 자동 제거 (FIFO)
-    if (!isReplacing && queue.length >= this.config.maxReflectorsPerPlayer) {
+    if (!isReplacing && queue.length >= this.getEffectiveMaxReflectors(playerId)) {
       const oldestIndex = queue.shift()!;
       const ox = oldestIndex % 100;
       const oy = Math.floor(oldestIndex / 100);

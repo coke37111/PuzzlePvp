@@ -190,9 +190,14 @@ export class GameScene extends Phaser.Scene {
   private myReflectorCooldownElapsed: number = 0;
   private reflectorSlotBgs: Phaser.GameObjects.Rectangle[] = [];
   private reflectorSlotFills: Phaser.GameObjects.Rectangle[] = [];
+  private reflectorSlotLockTexts: Phaser.GameObjects.Text[] = [];
   private reflectorCooldownTween: Phaser.Tweens.Tween | null = null;
   private reflectorSlotOrigXs: number[] = [];
   private shakeInProgress: boolean = false;
+  private myDestroyedSpawnCount: number = 0;
+  private effectiveMaxReflectorSlots: number = 5;
+  private mySpawnSlotMap: Map<number, number> = new Map(); // spawnId → locked slot index
+  private slotRespawnTimerEvents: Map<number, Phaser.Time.TimerEvent> = new Map(); // slot index → timer
   private sfx!: SoundManager;
   private movingWallContainer: Phaser.GameObjects.Container | null = null;
   private _movingWallInitPos: { x: number; y: number } | null = null;
@@ -212,6 +217,10 @@ export class GameScene extends Phaser.Scene {
     this.reflectorCooldown = data.matchData.reflectorCooldown || 3.0;
     this.maxReflectorStock = data.matchData.maxReflectorStock || 5;
     this.myReflectorStock = data.matchData.initialReflectorStock ?? this.maxReflectorStock;
+    this.myDestroyedSpawnCount = 0;
+    this.effectiveMaxReflectorSlots = this.maxReflectorStock;
+    this.mySpawnSlotMap = new Map();
+    this.slotRespawnTimerEvents = new Map();
     this.myReflectorCooldownElapsed = 0;
     this._movingWallInitPos = data.matchData.movingWall ?? null;
 
@@ -380,6 +389,7 @@ export class GameScene extends Phaser.Scene {
     const oy = this.gridOffsetY;
     this.reflectorSlotBgs = [];
     this.reflectorSlotFills = [];
+    this.reflectorSlotLockTexts = [];
     this.reflectorSlotOrigXs = [];
     this.shakeInProgress = false;
 
@@ -399,9 +409,15 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0, 0).setDepth(7)
         .setData('slotTop', sy)
         .setData('slotH', this.SLOT_SIZE);
+      // 잠금 슬롯 카운트다운 텍스트 (타워 파괴 시 리젠 시간 표시, depth 8)
+      const lockText = this.add.text(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, '', {
+        fontSize: '11px', color: '#ff6666', fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(8).setVisible(false);
 
       this.reflectorSlotBgs.push(bg);
       this.reflectorSlotFills.push(fill);
+      this.reflectorSlotLockTexts.push(lockText);
       this.reflectorSlotOrigXs.push(sx); // 흔들기 복구용 정식 X 좌표
     }
   }
@@ -413,10 +429,25 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < this.maxReflectorStock; i++) {
       const bg = this.reflectorSlotBgs[i];
       const fill = this.reflectorSlotFills[i];
+      const lock = this.reflectorSlotLockTexts[i];
       if (!bg || !fill) continue;
 
       const slotTop = fill.getData('slotTop') as number;
       const slotH = fill.getData('slotH') as number;
+
+      // 잠긴 슬롯 (타워 파괴로 비활성화)
+      if (i >= this.effectiveMaxReflectorSlots) {
+        bg.setFillStyle(0x330000);
+        if (this.reflectorCooldownTween && (this.reflectorCooldownTween as any).targets?.includes(fill)) {
+          this.reflectorCooldownTween.stop();
+        }
+        fill.y = slotTop + slotH;
+        fill.height = 0;
+        lock?.setVisible(true);
+        continue;
+      }
+
+      lock?.setVisible(false);
 
       if (i < stock) {
         // 보유 슬롯: 가득 찬 상태
@@ -426,7 +457,7 @@ export class GameScene extends Phaser.Scene {
         }
         fill.y = slotTop;
         fill.height = slotH;
-      } else if (i === stock && stock < this.maxReflectorStock) {
+      } else if (i === stock && stock < this.effectiveMaxReflectorSlots) {
         // 쿨다운 슬롯: 아래→위 채움 애니메이션
         bg.setFillStyle(0x111122);
         this.animateReflectorCooldown(fill, cooldownElapsed);
@@ -437,6 +468,35 @@ export class GameScene extends Phaser.Scene {
         fill.height = 0;
       }
     }
+  }
+
+  private startSlotCountdown(slotIndex: number, duration: number): void {
+    this.stopSlotCountdown(slotIndex);
+    const lockText = this.reflectorSlotLockTexts[slotIndex];
+    if (!lockText) return;
+    let remaining = Math.ceil(duration);
+    lockText.setText(String(remaining));
+    const event = this.time.addEvent({
+      delay: 1000,
+      repeat: remaining - 1,
+      callback: () => {
+        remaining--;
+        if (remaining > 0) lockText.setText(String(remaining));
+      },
+    });
+    this.slotRespawnTimerEvents.set(slotIndex, event);
+  }
+
+  private stopSlotCountdown(slotIndex: number): void {
+    const event = this.slotRespawnTimerEvents.get(slotIndex);
+    if (event) { event.remove(); this.slotRespawnTimerEvents.delete(slotIndex); }
+    const lockText = this.reflectorSlotLockTexts[slotIndex];
+    if (lockText) lockText.setText('');
+  }
+
+  private updateEffectiveMaxSlots(effectiveMax: number): void {
+    this.effectiveMaxReflectorSlots = effectiveMax;
+    this.updateReflectorStockUI(this.myReflectorStock, this.myReflectorCooldownElapsed);
   }
 
   private animateReflectorCooldown(fill: Phaser.GameObjects.Rectangle, elapsed: number): void {
@@ -1282,6 +1342,16 @@ export class GameScene extends Phaser.Scene {
 
       // 리스폰 카운트다운 표시
       this.startSpawnCountdown(visual, msg.respawnDuration);
+
+      // 내 스폰이면 반사판 슬롯 감소 + 잠긴 슬롯에 리젠 카운트다운 표시
+      const spInfo = this.serverSpawnPoints.find(sp => sp.id === msg.spawnId);
+      if (spInfo?.ownerId === this.myPlayerId) {
+        const slotIndex = this.maxReflectorStock - 1 - this.myDestroyedSpawnCount;
+        this.mySpawnSlotMap.set(msg.spawnId, slotIndex);
+        this.myDestroyedSpawnCount++;
+        this.updateEffectiveMaxSlots(this.maxReflectorStock - this.myDestroyedSpawnCount);
+        this.startSlotCountdown(slotIndex, msg.respawnDuration);
+      }
     };
 
     this.socket.onSpawnRespawned = (msg: SpawnRespawnedMsg) => {
@@ -1309,6 +1379,17 @@ export class GameScene extends Phaser.Scene {
       // HP 바 풀로 복구
       const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       animHpBar(this, visual.hpBar, baseX, 1.0, `spawn_hp_${msg.spawnId}`, this.hpTweens);
+
+      // 내 스폰이면 반사판 슬롯 복구 + 카운트다운 정리
+      if (spInfo?.ownerId === this.myPlayerId) {
+        const slotIndex = this.mySpawnSlotMap.get(msg.spawnId);
+        if (slotIndex !== undefined) {
+          this.stopSlotCountdown(slotIndex);
+          this.mySpawnSlotMap.delete(msg.spawnId);
+        }
+        this.myDestroyedSpawnCount = Math.max(0, this.myDestroyedSpawnCount - 1);
+        this.updateEffectiveMaxSlots(this.maxReflectorStock - this.myDestroyedSpawnCount);
+      }
 
       // 팝인 애니메이션
       this.sfx.spawnRespawn();
