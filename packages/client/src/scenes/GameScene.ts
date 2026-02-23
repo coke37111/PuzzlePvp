@@ -283,6 +283,7 @@ export class GameScene extends Phaser.Scene {
     this.movingWallContainer = null;
 
     this.drawGrid();
+    this.showCoreHighlight();
     if (this._movingWallInitPos) {
       this.drawMovingWall(this._movingWallInitPos.x, this._movingWallInitPos.y);
     }
@@ -755,6 +756,58 @@ export class GameScene extends Phaser.Scene {
       ownerId,
       destroyed: false,
     });
+  }
+
+  private showCoreHighlight(): void {
+    for (const [, core] of this.coreVisuals) {
+      if (core.ownerId !== this.myPlayerId) continue;
+
+      const cx = core.x * TILE_SIZE + TILE_SIZE / 2;
+      const startY = core.y * TILE_SIZE - TILE_SIZE * 1.0;
+
+      const arrow = this.add.graphics();
+      const color = this.getTeamColor(this.myPlayerId);
+
+      // 아래 방향 화살표: 줄기 + 삼각형 헤드
+      arrow.fillStyle(color, 0.95);
+      arrow.fillRect(-7, -26, 14, 14);                           // 줄기
+      arrow.fillTriangle(-18, -12, 18, -12, 0, 12);             // 헤드
+
+      arrow.setPosition(cx, startY);
+      this.tilesLayer.add(arrow);
+
+      // Y 바운스
+      this.tweens.add({
+        targets: arrow,
+        y: startY + TILE_SIZE * 0.42,
+        duration: 420,
+        ease: 'Sine.easeInOut',
+        yoyo: true,
+        repeat: -1,
+      });
+
+      // 스쿼시 스케일 (띠용 효과)
+      this.tweens.add({
+        targets: arrow,
+        scaleY: 0.7,
+        scaleX: 1.35,
+        duration: 420,
+        ease: 'Sine.easeInOut',
+        yoyo: true,
+        repeat: -1,
+      });
+
+      // 3초 후 페이드아웃
+      this.time.delayedCall(3000, () => {
+        this.tweens.killTweensOf(arrow);
+        this.tweens.add({
+          targets: arrow,
+          alpha: 0,
+          duration: 400,
+          onComplete: () => arrow.destroy(),
+        });
+      });
+    }
   }
 
   private updateCoreHp(coreId: number, hp: number, _ownerId: number): void {

@@ -6,10 +6,10 @@ import { Direction } from '../enums/Direction';
 // UniqueIndex 상수 (Classic1 호환)
 export const TILE_INDEX = {
   EMPTY: 1,
-  START_RIGHT: 2,   // 오른쪽으로 발사하는 스타트 (P1용: (2,7))
-  START_LEFT: 3,    // 왼쪽으로 발사하는 스타트 (P2용: (6,1))
-  START_UP: 4,      // 위쪽으로 발사하는 스타트 (P1용: (1,6))
-  START_DOWN: 5,    // 아래쪽으로 발사하는 스타트 (P2용: (7,2))
+  START_RIGHT: 2,   // 오른쪽으로 발사하는 스타트 (P1용: (3,7))
+  START_LEFT: 3,    // 왼쪽으로 발사하는 스타트 (P2용: (5,1))
+  START_UP: 4,      // 위쪽으로 발사하는 스타트 (P1용: (1,5))
+  START_DOWN: 5,    // 아래쪽으로 발사하는 스타트 (P2용: (7,3))
   CORE_P1: 6,       // P1 코어 (1,7)
   BLOCK: 7,
   CORE_P2: 8,       // P2 코어 (7,1)
