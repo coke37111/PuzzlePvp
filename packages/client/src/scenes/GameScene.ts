@@ -293,11 +293,14 @@ export class GameScene extends Phaser.Scene {
     this.setupUI();
     this.setupSocketEvents();
     this.startSpawnGauge();
-
+    this.showCoreIntro();
   }
 
   // --- 씬 종료 시 정리 ---
   shutdown(): void {
+    this.input.enabled = true;
+    this.cameras.main.setZoom(1);
+    this.cameras.main.setScroll(0, 0);
     this.tweens.killAll();
     this.time.removeAllEvents();
     // 다음 게임에서 stale 콜백 방지
@@ -616,11 +619,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getTileColor(tileIdx: number): number {
+    // 스폰/코어 타일은 상대적 관점 적용: 내 타일=파란, 적 타일=빨간
     switch (tileIdx) {
-      case 2: case 4: return TILE_P1_SPAWN_COLOR;
-      case 3: case 5: return TILE_P2_SPAWN_COLOR;
-      case 6: return TILE_P1_CORE_COLOR;
-      case 8: return TILE_P2_CORE_COLOR;
+      case 2: case 4: // P1 스폰
+        return this.myPlayerId === 0 ? TILE_P1_SPAWN_COLOR : TILE_P2_SPAWN_COLOR;
+      case 3: case 5: // P2 스폰
+        return this.myPlayerId === 1 ? TILE_P1_SPAWN_COLOR : TILE_P2_SPAWN_COLOR;
+      case 6: // P1 코어
+        return this.myPlayerId === 0 ? TILE_P1_CORE_COLOR : TILE_P2_CORE_COLOR;
+      case 8: // P2 코어
+        return this.myPlayerId === 1 ? TILE_P1_CORE_COLOR : TILE_P2_CORE_COLOR;
       case 7: return TILE_BLOCK_COLOR;
       default: return TILE_EMPTY_COLOR;
     }
@@ -755,6 +763,37 @@ export class GameScene extends Phaser.Scene {
       maxHp, currentHp: maxHp,
       ownerId,
       destroyed: false,
+    });
+  }
+
+  private showCoreIntro(): void {
+    const myCore = Array.from(this.coreVisuals.values()).find(c => c.ownerId === this.myPlayerId);
+    if (!myCore) return;
+
+    const { width, height } = this.scale;
+    const worldX = this.gridOffsetX + myCore.x * TILE_SIZE + TILE_SIZE / 2;
+    const worldY = this.gridOffsetY + myCore.y * TILE_SIZE + TILE_SIZE / 2;
+
+    this.input.enabled = false;
+    this.cameras.main.pan(worldX, worldY, 700, 'Sine.easeInOut');
+    this.cameras.main.zoomTo(2.2, 700, 'Sine.easeInOut');
+
+    this.time.delayedCall(750, () => {
+      const label = this.add.text(worldX, worldY - TILE_SIZE, '내 코어', {
+        fontSize: '14px',
+        color: '#88ccff',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(300).setAlpha(0);
+      this.tweens.add({ targets: label, alpha: 1, duration: 200 });
+
+      this.time.delayedCall(1500, () => {
+        this.tweens.add({ targets: label, alpha: 0, duration: 400, onComplete: () => label.destroy() });
+        this.cameras.main.pan(width / 2, height / 2, 700, 'Sine.easeInOut');
+        this.cameras.main.zoomTo(1, 700, 'Sine.easeInOut');
+        this.time.delayedCall(700, () => { this.input.enabled = true; });
+      });
     });
   }
 
