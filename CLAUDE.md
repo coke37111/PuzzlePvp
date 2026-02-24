@@ -86,12 +86,14 @@ Classic1의 `Core/` 폴더에 해당. Unity 독립적인 순수 게임 로직.
 
 | 파라미터 | 값 |
 |----------|-----|
-| timePerPhase | 0.3초 (공 한 칸 이동) |
-| spawnInterval | 1.0초 (자동 발사 주기) |
-| spawnMaxHp | 5 |
+| timePerPhase | 0.2초 (공 한 칸 이동) |
+| spawnInterval | 5.0초 (자동 발사 주기) |
+| spawnHp | 7 |
+| coreHp | 15 |
 | maxReflectorsPerPlayer | 5 |
+| reflectorCooldown | 3.0초 |
 | 서버 틱 | 50ms (20 FPS) |
-| 맵 크기 | 11 x 11 |
+| 맵 크기 | 13 x 9 |
 
 ---
 

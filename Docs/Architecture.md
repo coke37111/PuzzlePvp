@@ -1,4 +1,4 @@
-﻿# PuzzlePvP - 아키텍처
+# PuzzlePvP - 아키텍처
 
 ## 전체 구조
 
@@ -36,7 +36,7 @@ Classic1의 Core-UnityAdapter 패턴에서 영감을 받아, **shared 패키지�
 | 파일 | 값 | 설명 |
 |------|-----|------|
 | `Direction.ts` | None, Up, Down, Left, Right | 4방향 + None |
-| `TileType.ts` | Empty, Start, Goal, Gold, Split, Portal, Block, 반사판 4종 | 타일 종류 |
+| `TileType.ts` | Empty, Start, Core, Block, Split, FixedReflector, 반사판 2종 | 타일 종류 |
 | `ReflectorType.ts` | Slash(1), Backslash(2) | 반사판 종류 (`/`, `\`) |
 | `EndReason.ts` | Goal, Blocked, Split, Crash, Loop, PortalUnlinked | 공 종료 사유 |
 
@@ -44,39 +44,69 @@ Classic1의 Core-UnityAdapter 패턴에서 영감을 받아, **shared 패키지�
 
 **TileData** → 타일 불변 속성 (uniqueIndex, tileType, 방향, 이동성)
 **TileModel** → 런타임 타일 (x, y 좌표, 고유 인덱스 = `x + y * 100`)
-**BallModel** → 공 (id, placementTile, ownerId)
-**SpawnPointModel** → 출발점 HP 시스템 (heal/damage, 활성/비활성)
+**BallModel** → 공 (id, placementTile, ownerId, power, speedMultiplier)
+**SpawnPointModel** → 출발점 HP 시스템 (heal/damage, 활성/비활성, 리스폰 카운트다운)
+**CoreModel** → 코어 HP 시스템 (heal/damage)
+**MonsterModel** → 몬스터 (id, type, x, y, hp, active)
+**DroppedItemModel** → 드랍 아이템 (id, x, y, itemType)
 **MapModel** → 맵 데이터 + 반사판 관리 (배치/제거, 소유자 검증)
-**TileRegistry** → 타일 데이터 레지스트리 + 기본 배틀 맵 생성
+**TileRegistry** → 타일 데이터 레지스트리 + 기본 배틀 맵 생성 (13x9)
 
 ### 시뮬레이션 엔진
 
 ```
 BallSimulator (공 물리 시뮬레이션)
-├── BallSimulationInstance (개별 공 상태)
-└── Phase 기반 이동 루프
+├── BallSimulationInstance (개별 공 상태 + 독립 페이즈 추적)
+└── Phase 기반 이동 루프 (공별 독립 speedMultiplier 적용)
 
 BattleSimulator (대전 시뮬레이터)
 ├── BallSimulator 확장
-├── SpawnPointModel[] (출발점 HP)
-├── 자동 공 발사 (spawnInterval: 0.2초)
-├── 반사판 한도 관리 (5개 초과 시 거부, 같은 위치 타입 변경 허용)
+├── SpawnPointModel[] (출발점 HP, 리스폰)
+├── CoreModel[] (코어 HP)
+├── MonsterModel[] (몬스터 AI + 이동)
+├── DroppedItemModel (아이템 드랍/픽업)
+├── WallState (성벽 HP 관리)
+├── 자동 공 발사 (spawnInterval: 5.0초)
+├── 반사판 스톡/쿨다운 시스템 (3초마다 1개 충전)
 ├── 적 스폰존 보호 (설치 금지 영역)
-└── 승리 조건 판정
+├── 성벽 위 반사판 설치 불가
+└── 승리 조건 판정 (모든 코어 파괴)
 ```
 
-### 네트워크 메시지
+### 몬스터 타입 및 아이템 드랍
+
+| MonsterType | 확률 | DropItemType | 효과 |
+|-------------|------|--------------|------|
+| Orange | 50% | PowerUp | 공격력 +1 (누적) |
+| White | 30% | BallCount | 발사당 공 수 +1 (누적) |
+| LightBlue | 19.9% | SpeedUp | 공 속도 배율 +0.25 (누적) |
+| Purple | 0.1% | ReflectorExpand | 반사판 보드 한도 +1 (누적) |
+
+### 네트워크 메시지 (`NetworkMessage.ts`)
 
 **클라이언트 → 서버**:
 - `join_queue` — 매칭 요청
 - `place_reflector` — 반사판 배치 (x, y, type)
 - `remove_reflector` — 반사판 제거 (x, y)
+- `use_item_wall` — 성벽 아이템 사용 (x, y)
+- `use_item_time_stop` — 시간 정지 아이템 사용
 
 **서버 → 클라이언트**:
-- `match_found` — 매칭 성공 (roomId, playerId, mapData, spawnPoints)
+- `match_found` — 매칭 성공 (roomId, playerId, mapData, spawnPoints, cores, monsters)
 - `ball_spawned` / `ball_moved` / `ball_ended` — 공 이벤트
 - `reflector_placed` / `reflector_removed` — 반사판 이벤트
-- `spawn_hp` / `spawn_destroyed` — 출발점 HP 이벤트
+- `reflector_stock_changed` — 반사판 스톡 변경 (stock, cooldownElapsed)
+- `spawn_hp` / `spawn_destroyed` / `spawn_respawned` — 출발점 이벤트
+- `spawn_healed` — 출발점 HP 회복 팝업
+- `core_hp` / `core_healed` — 코어 HP 이벤트
+- `monster_spawned` / `monster_moved` / `monster_damaged` / `monster_killed` — 몬스터 이벤트
+- `item_dropped` / `item_picked_up` — 아이템 드랍/픽업
+- `ball_powered_up` — 공 공격력 증가 (playerId, power)
+- `player_ball_count_up` — 발사 공 수 증가 (playerId, ballCountBonus)
+- `player_speed_up` — 공 속도 증가 (playerId, speedBonus)
+- `player_reflector_expand` — 반사판 한도 증가 (playerId, maxReflectors)
+- `wall_placed` / `wall_damaged` / `wall_destroyed` — 성벽 이벤트
+- `time_stop_started` / `time_stop_ended` — 시간 정지 이벤트
 - `game_over` — 게임 종료 (winnerId)
 
 ---
@@ -96,7 +126,7 @@ BattleSimulator (대전 시뮬레이터)
 **index.ts** — Express + Socket.io 앱 (포트 환경변수 `PORT`, 기본 4000)
 - 헬스 체크: `GET /health`
 - CORS 전체 허용
-- 프로덕션: `client/dist` 정적 파일 서빙 (Express → Vite 빌드 결과물)
+- 프로덕션: `client/dist` 정적 파일 서빙
 - 연결 시 MatchmakingQueue에 등록
 
 **MatchmakingQueue** — FIFO 매칭
@@ -107,8 +137,8 @@ BattleSimulator (대전 시뮬레이터)
 - 50ms 틱 타이머 (20 FPS)
 - BattleSimulator 구동
 - 이벤트 콜백 → Socket.io 브로드캐스트
-- 플레이어 연결 끊김 → 상대 승리 처리 (틱 타이머 초기화 후 disconnect 핸들러 등록으로 레이스 컨디션 방지)
-- stop() 시 타이머 정리 + 모든 소켓 리스너 해제 + onDestroy 콜백
+- 플레이어 연결 끊김 → 상대 승리 처리
+- stop() 시 타이머 정리 + 모든 소켓 리스너 해제
 
 ---
 
@@ -126,44 +156,43 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 |-------|------|
 | `MainMenuScene` | 타이틀, 게임 시작 버튼 |
 | `MatchmakingScene` | 서버 연결, 매칭 대기, 취소 |
-| `GameScene` | 게임플레이 (그리드, 공, 반사판, HP바, 입력) |
+| `GameScene` | 게임플레이 (그리드, 공, 반사판, HP바, 입력, UI) |
 | `ResultScene` | 승리/패배/무승부, 다시 플레이 |
 
 ### SocketClient (싱글턴)
 
 서버와의 Socket.io 통신 관리. 콜백 기반 이벤트 처리.
 - 개발: `http://localhost:4000`
-- 프로덕션: `window.location.origin` (서버가 클라이언트도 서빙)
+- 프로덕션: `window.location.origin`
 
 ### visual/ 패키지
 
 | 파일 | 역할 |
 |------|------|
-| `Constants.ts` | 타일 크기, 색상, HP 그라디언트 색상, 애니메이션 타이밍 |
-| `GridRenderer.ts` | 그리드 타일 렌더링 (배경, 타일 색상, 스폰존 오버레이) |
-| `VisualEffects.ts` | HP 그라디언트 색상 계산, 대미지 팝업 애니메이션 |
+| `Constants.ts` | 타일 크기, 색상, HP 그라디언트, 몬스터 타입별 색상 |
+| `VisualEffects.ts` | HP 그라디언트 계산, 데미지/힐 팝업 애니메이션, 공 종료 파티클 |
+| `SoundManager.ts` | Web Audio API 기반 효과음 (on/off 상태 localStorage 저장) |
 
-**HP 그라디언트**: HP 비율에 따라 초록(1.0) → 노랑(0.5) → 빨강(0.0)으로 선형 보간
-
-**대미지 팝업**: 스폰 포인트 타격 시 `-1` 텍스트가 위로 떠오르며 페이드 아웃
-
-### GameScene UI
+### GameScene UI 요소
 
 | 요소 | 설명 |
 |------|------|
-| 블루팀 반사판 카운트 | `◆ N/5` 형식, 좌상단 표시 (파랑) |
-| 레드팀 반사판 카운트 | `◆ N/5` 형식, 우상단 표시 (빨강) |
-| 터치 사이클 | 빈 타일 터치 → `/` 설치 → `\` 교체 → 제거 (팝업 없음) |
-| 스폰존 오버레이 | 플레이어별 색상으로 설치 금지 영역 표시 (내 구역 + 상대 구역 모두) |
-| HP 바 | 스폰 포인트 아래, HP 비율에 따라 색상 변경 |
-| 토스트 알림 | 반사판 한도 초과 시 하단 메시지 표시 |
+| 반사판 스톡 UI | 좌/우상단, 아이콘으로 현재 스톡 수 표시 + 쿨다운 게이지 |
+| 출발점 HP 바 | 스폰 포인트 아래, HP 비율에 따라 색상 변경 |
+| 코어 HP 바 | 코어 타일 아래, HP 비율에 따라 색상 변경 |
+| 스폰존 오버레이 | 플레이어별 색상으로 반사판 설치 금지 영역 표시 |
+| 리스폰 카운트다운 | 파괴된 스폰 위에 남은 시간 표시 (20초 시작, +5초씩 증가) |
+| 데미지 팝업 | 피격 시 `-N` 텍스트 위로 떠오르며 페이드아웃 |
+| 힐 팝업 | HP 회복 시 `+N` 텍스트 |
+| 볼륨 토글 버튼 | 좌상단, 사운드 on/off 전환 |
+| 코어 화살표 | 게임 시작 시 내 코어 위치 강조 애니메이션 |
 
-### GameScene 렌더링 상수
+### 렌더링 상수
 
 | 상수 | 값 | 설명 |
 |------|-----|------|
 | `TILE_SIZE` | 52px | 타일 크기 |
-| `BALL_RADIUS` | 10px | 공 반경 |
+| `BALL_RADIUS` | 7px | 공 반경 |
 | P1 색상 | `0x4488ff` | 파랑 |
 | P2 색상 | `0xff4444` | 빨강 |
 | `HP_COLOR_HIGH` | `0x44cc44` | HP 만렙 (초록) |
@@ -194,11 +223,12 @@ HTTP 요청 흐름:
 
 ## 핵심 알고리즘
 
-### Phase 기반 공 이동
+### Phase 기반 공 이동 (공별 독립 속도)
 
 ```typescript
-update(deltaTime):
-  phaseRate += deltaTime / timePerPhase  // 기본 0.3초
+// BallSimulationInstance 단위로 독립 페이즈 관리
+update(deltaTime, speedMultiplier):
+  phaseRate += deltaTime / timePerPhase * speedMultiplier
   currentPhase = floor(phaseRate)
 
   매 phase마다:
@@ -216,7 +246,16 @@ update(deltaTime):
 | Slash `/` | Right | Left | Down | Up |
 | Backslash `\` | Left | Right | Up | Down |
 
+### 반사판 스톡 시스템
+
+```
+초기: initialReflectorStock (3)개 보유
+설치 시: stock -= 1
+쿨다운: reflectorCooldown (3초)마다 stock += 1
+한도: maxReflectorStock (5)개 초과 시 충전 정지
+```
+
 ### 승리 조건
 
-- 한쪽 SpawnPoint 모두 파괴 → 다른 쪽 승리
+- 한쪽 Core 모두 파괴 → 다른 쪽 승리
 - 동시 파괴 → 무승부 (winnerId = -1)
