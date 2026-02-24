@@ -3,7 +3,7 @@ import { BallSimulator } from './BallSimulator';
 import { SpawnPointModel, CoreModel } from './SpawnPointModel';
 import { TileModel } from './TileModel';
 import { BallModel } from './BallModel';
-import { MonsterModel } from './MonsterModel';
+import { MonsterModel, MonsterType } from './MonsterModel';
 import { DroppedItemModel, DropItemType } from './ItemModel';
 import { Direction } from '../enums/Direction';
 import { ReflectorType } from '../enums/ReflectorType';
@@ -91,7 +91,7 @@ export class BattleSimulator {
   private spawnTimer: number = 0;
   private _phaseNumber: number = 0;
   get phaseNumber(): number { return this._phaseNumber; }
-  private static readonly SPEED_RAMP_TURNS = 10; // 10턴 후 정상 속도 도달
+
   // 반사판 스톡 & 쿨다운
   private reflectorStocks: Map<number, number> = new Map();   // playerId → stock
   private reflectorCooldownTimers: Map<number, number> = new Map(); // playerId → elapsed(초)
@@ -132,13 +132,16 @@ export class BattleSimulator {
   onCoreDestroyed?: (coreId: number) => void;
   onSpawnPhaseComplete?: (phaseNumber: number) => void;
   onReflectorStockChanged?: (playerId: number, stock: number, cooldownElapsed: number) => void;
-  onMonsterSpawned?: (id: number, x: number, y: number, hp: number, maxHp: number) => void;
+  onMonsterSpawned?: (id: number, monsterType: MonsterType, x: number, y: number, hp: number, maxHp: number) => void;
   onMonsterDamaged?: (id: number, hp: number, maxHp: number) => void;
   onMonsterKilled?: (id: number, x: number, y: number) => void;
   onMonsterMoved?: (id: number, fromX: number, fromY: number, toX: number, toY: number) => void;
   onItemDropped?: (itemId: number, x: number, y: number, itemType: DropItemType) => void;
   onItemPickedUp?: (itemId: number, ballId: number, ballOwnerId: number) => void;
   onBallPoweredUp?: (ballId: number, ownerId: number) => void;
+  onPlayerBallCountUp?: (playerId: number, ballCountBonus: number) => void;
+  onPlayerSpeedUp?: (playerId: number, speedBonus: number) => void;
+  onPlayerReflectorExpand?: (playerId: number, reflectorBonus: number) => void;
   onSpawnHealed?: (event: { spawnId: number; hp: number; maxHp: number; ownerId: number }) => void;
   onCoreHealed?: (event: { coreId: number; hp: number; maxHp: number; ownerId: number }) => void;
 
@@ -149,6 +152,9 @@ export class BattleSimulator {
   private droppedItems: Map<string, DroppedItemModel> = new Map();
   private nextItemId: number = 1;
   private playerBasePower: number[] = [1, 1];
+  private playerBallCountBonus: number[] = [0, 0];    // White 몬스터 드랍: 페이즈당 추가 공 수
+  private playerSpeedMultiplier: number[] = [1.0, 1.0]; // LightBlue 몬스터 드랍: 공 이동 속도 배율
+  private playerReflectorBonus: number[] = [0, 0];    // Purple 몬스터 드랍: 보드 반사판 최대 갯수 보너스
 
   getMonsters(): MonsterModel[] {
     return [...this.monsters[0], ...this.monsters[1]];
@@ -232,6 +238,9 @@ export class BattleSimulator {
     this.droppedItems.clear();
     this.nextItemId = 1;
     this.playerBasePower = [1, 1];
+    this.playerBallCountBonus = [0, 0];
+    this.playerSpeedMultiplier = [1.0, 1.0];
+    this.playerReflectorBonus = [0, 0];
 
     // 중앙 라인(x=6) 초기 벽 배치
     const centerWalls: { y: number; hp: number }[] = [
@@ -250,14 +259,15 @@ export class BattleSimulator {
       this.walls.set(`6,${y}`, wall);
     }
 
-    // 각 플레이어 진영에 몬스터 3마리씩 생성
+    // 각 플레이어 진영에 MAX_MONSTERS_PER_ZONE마리 몬스터를 확률로 생성
     for (let pid = 0; pid < 2; pid++) {
       for (let i = 0; i < BattleSimulator.MAX_MONSTERS_PER_ZONE; i++) {
         const tile = this.pickRandomEmptyTile(pid);
         if (tile) {
-          const m = new MonsterModel(this.nextMonsterId++, tile.x, tile.y, Math.ceil(Math.pow(1.2, this.monsterGeneration[pid])));
+          const monsterType = this.pickRandomMonsterType();
+          const m = new MonsterModel(this.nextMonsterId++, monsterType, tile.x, tile.y, Math.ceil(Math.pow(1.1, this.monsterGeneration[pid])));
           this.monsters[pid].push(m);
-          this.onMonsterSpawned?.(m.id, m.x, m.y, m.hp, m.maxHp);
+          this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
         }
       }
     }
@@ -284,6 +294,15 @@ export class BattleSimulator {
           }
           ball.power = this.playerBasePower[ball.ownerId];
           this.onBallPoweredUp?.(ball.id, ball.ownerId);
+        } else if (item.itemType === DropItemType.BallCount) {
+          this.playerBallCountBonus[ball.ownerId]++;
+          this.onPlayerBallCountUp?.(ball.ownerId, this.playerBallCountBonus[ball.ownerId]);
+        } else if (item.itemType === DropItemType.SpeedUp) {
+          this.playerSpeedMultiplier[ball.ownerId] += 0.05;
+          this.onPlayerSpeedUp?.(ball.ownerId, this.playerSpeedMultiplier[ball.ownerId]);
+        } else if (item.itemType === DropItemType.ReflectorExpand) {
+          this.playerReflectorBonus[ball.ownerId]++;
+          this.onPlayerReflectorExpand?.(ball.ownerId, this.playerReflectorBonus[ball.ownerId]);
         }
         this.onItemPickedUp?.(item.id, ball.id, ball.ownerId);
       }
@@ -297,15 +316,16 @@ export class BattleSimulator {
         monster.damage(ball.power);
         if (!monster.active) {
           this.onMonsterKilled?.(monster.id, monster.x, monster.y);
-          this.spawnItemAt(monster.x, monster.y);
-          // 즉시 리젠
+          this.spawnItemAt(monster.x, monster.y, monster.type);
+          // 즉시 리젠 (확률로 새 타입 결정)
           this.monsterGeneration[pid]++;
-          const newHp = Math.ceil(Math.pow(1.2, this.monsterGeneration[pid]));
+          const newHp = Math.ceil(Math.pow(1.1, this.monsterGeneration[pid]));
           const spawnTile = this.pickRandomEmptyTile(pid);
           if (spawnTile) {
-            const m = new MonsterModel(this.nextMonsterId++, spawnTile.x, spawnTile.y, newHp);
+            const newType = this.pickRandomMonsterType();
+            const m = new MonsterModel(this.nextMonsterId++, newType, spawnTile.x, spawnTile.y, newHp);
             this.monsters[pid][idx] = m;
-            this.onMonsterSpawned?.(m.id, m.x, m.y, m.hp, m.maxHp);
+            this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
           } else {
             this.monsters[pid].splice(idx, 1); // 빈 자리 정리
           }
@@ -464,7 +484,7 @@ export class BattleSimulator {
 
   private spawnAll(): void {
     this._phaseNumber++;
-    const ballCount = Math.floor(this._phaseNumber / 5) + 1;
+    const baseBallCount = 1; // 아이템으로만 증가 (자동 증가 없음)
 
     // 플레이어별 모든 몬스터 이동
     const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -499,16 +519,11 @@ export class BattleSimulator {
       }
     }
 
-    // 속도 점진 증가: 1턴=2배 느림, 10턴마다 10% 빨라져 10턴 후 정상 속도
-    const ramp = BattleSimulator.SPEED_RAMP_TURNS;
-    const t = this.config.timePerPhase;
-    const effectiveTimePerPhase = Math.max(t, t * 2 - (this._phaseNumber - 1) * (t / ramp));
-    this.simulator.setTimePerPhase(effectiveTimePerPhase);
-
     // 타워별 큐에 추가 (페이즈 경계마다 1발씩 순차 발사 → 겹침 방지)
     for (const sp of this.spawnPoints) {
       if (!sp.active) continue;
       const queue = this.spawnQueues.get(sp.id) ?? [];
+      const ballCount = baseBallCount + this.playerBallCountBonus[sp.ownerId];
       for (let i = 0; i < ballCount; i++) {
         queue.push({ tile: sp.tile, direction: sp.spawnDirection, ownerId: sp.ownerId });
       }
@@ -527,10 +542,12 @@ export class BattleSimulator {
   /** 각 타워 큐에서 공 한 발씩 발사 */
   private fireNextQueuedBalls(): void {
     for (const queue of this.spawnQueues.values()) {
-      if (queue.length > 0) {
-        const entry = queue.shift()!;
-        const inst = this.simulator.spawnBall(entry.tile, entry.direction, entry.ownerId);
-        if (inst) inst.ball.power = this.playerBasePower[entry.ownerId];
+      if (queue.length === 0) continue;
+      const entry = queue.shift()!;
+      const inst = this.simulator.spawnBall(entry.tile, entry.direction, entry.ownerId);
+      if (inst) {
+        inst.ball.power = this.playerBasePower[entry.ownerId];
+        inst.ball.speedMultiplier = this.playerSpeedMultiplier[entry.ownerId];
       }
     }
   }
@@ -587,10 +604,10 @@ export class BattleSimulator {
     }
   }
 
-  /** 현재 유효 반사판 최대 슬롯 (파괴된 아군 스폰 수만큼 감소) */
+  /** 현재 유효 반사판 최대 슬롯 (파괴된 아군 스폰 수만큼 감소, 아이템 보너스 포함) */
   getEffectiveMaxReflectors(playerId: number): number {
     const destroyed = this.spawnPoints.filter(sp => sp.ownerId === playerId && !sp.active).length;
-    return Math.max(0, this.config.maxReflectorsPerPlayer - destroyed);
+    return Math.max(0, this.config.maxReflectorsPerPlayer + this.playerReflectorBonus[playerId] - destroyed);
   }
 
   /** 타워 파괴 시 초과 반사판(마지막 배치순) 제거 */
@@ -627,6 +644,7 @@ export class BattleSimulator {
 
   placeReflector(playerId: number, x: number, y: number, type: ReflectorType): boolean {
     if (this.isEnemySpawnZone(playerId, x, y)) return false;
+    if (this.walls.has(`${x},${y}`)) return false;
     if (this.getMonsters().some(m => m.active && m.x === x && m.y === y)) return false;
 
     const queue = this.reflectorQueues.get(playerId)!;
@@ -716,8 +734,22 @@ export class BattleSimulator {
     return true;
   }
 
-  private spawnItemAt(x: number, y: number): void {
-    const item = new DroppedItemModel(this.nextItemId++, x, y, DropItemType.PowerUp);
+  /** 확률에 따라 몬스터 타입 결정: Orange 50%, White 30%, LightBlue 19.9%, Purple 0.1% */
+  private pickRandomMonsterType(): MonsterType {
+    const r = Math.random() * 100;
+    if (r < 0.1)  return MonsterType.Purple;    // 0.1%
+    if (r < 20.0) return MonsterType.LightBlue; // 19.9%
+    if (r < 50.0) return MonsterType.White;     // 30%
+    return MonsterType.Orange;                   // 50%
+  }
+
+  private spawnItemAt(x: number, y: number, monsterType: MonsterType): void {
+    const itemType =
+      monsterType === MonsterType.White     ? DropItemType.BallCount :
+      monsterType === MonsterType.LightBlue ? DropItemType.SpeedUp   :
+      monsterType === MonsterType.Purple    ? DropItemType.ReflectorExpand :
+                                              DropItemType.PowerUp;
+    const item = new DroppedItemModel(this.nextItemId++, x, y, itemType);
     this.droppedItems.set(`${x},${y}`, item);
     this.onItemDropped?.(item.id, x, y, item.itemType);
   }

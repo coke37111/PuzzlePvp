@@ -133,29 +133,41 @@ export class BallSimulator {
 
   /** delta 시간만큼 시뮬레이션 진행. 시뮬레이션이 끝나면 true 반환 */
   update(delta: number): boolean {
+    // 전역 페이즈 (BattleSimulator의 fireNextQueuedBalls 타이밍 기준)
     this.totalPhaseRate += delta * (1 / this.timePerPhase);
+    const globalPhase = Math.floor(this.totalPhaseRate);
+    if (globalPhase !== this.currentPhase) {
+      this.currentPhase = globalPhase;
+    }
 
-    const currentPhase = Math.floor(this.totalPhaseRate);
-    let phaseChanged = currentPhase !== this.currentPhase;
+    // 인스턴스별 독립 진행 (speedMultiplier 반영)
     const prevTiles = new Map<number, TileModel>();
+    const advancing: BallSimulationInstance[] = [];
 
-    if (phaseChanged) {
-      // 이동 전 위치 저장
-      for (const inst of this.instances.filter(i => !i.isEnd)) {
+    for (const inst of this.instances) {
+      if (inst.isEnd) continue;
+      inst.localPhaseRate += delta * (inst.ball.speedMultiplier / this.timePerPhase);
+      const newLocalPhase = Math.floor(inst.localPhaseRate);
+      if (newLocalPhase > inst.localPhase) {
+        inst.localPhase = newLocalPhase;
+        advancing.push(inst);
         prevTiles.set(inst.ball.id, inst.currentTile);
       }
+    }
 
+    if (advancing.length > 0) {
       // 1. 다음 타일로 이동
-      for (const inst of this.instances.filter(i => !i.isEnd)) {
-        this.updateNextTile(inst, currentPhase);
+      for (const inst of advancing) {
+        this.updateNextTile(inst, inst.localPhase);
       }
 
       // 2. 현재 타일 이벤트 처리
       const newInstances: BallSimulationInstance[] = [];
       const processedSplit = new Set<number>();
-      for (const inst of this.instances.filter(i => !i.isEnd)) {
+      for (const inst of advancing) {
+        if (inst.isEnd) continue;
         if (processedSplit.has(inst.currentTile.index)) continue;
-        this.procCurrentTileEvent(inst, currentPhase, newInstances);
+        this.procCurrentTileEvent(inst, inst.localPhase, newInstances);
         if (inst.currentTile.isSplit) processedSplit.add(inst.currentTile.index);
       }
 
@@ -165,24 +177,20 @@ export class BallSimulator {
         this.onBallCreated?.(ni.ball, ni.direction);
       }
 
-      this.currentPhase = currentPhase;
-    }
-
-    const currentRate = this.totalPhaseRate - currentPhase;
-
-    // 타일 변경 이벤트 (50% 지점)
-    if (this.lastTileChangedPhase < this.currentPhase && currentRate >= 0.5) {
-      this.lastTileChangedPhase++;
-    }
-
-    // 공 이동 이벤트 — phase 변경 시 1회만 (클라이언트가 자체 보간)
-    if (phaseChanged) {
-      for (const inst of this.instances.filter(i => !i.isEnd && i.isMoving)) {
+      // 4. 이동 이벤트 발송
+      for (const inst of advancing) {
+        if (inst.isEnd || !inst.isMoving) continue;
         const prevTile = prevTiles.get(inst.ball.id);
         if (prevTile) {
           this.onBallMoved?.(inst.ball, prevTile, inst.currentTile);
         }
       }
+    }
+
+    // 타일 변경 이벤트 (전역 페이즈 50% 지점)
+    const currentRate = this.totalPhaseRate - globalPhase;
+    if (this.lastTileChangedPhase < this.currentPhase && currentRate >= 0.5) {
+      this.lastTileChangedPhase++;
     }
 
     // 종료 예약 처리
@@ -306,8 +314,11 @@ export class BallSimulator {
     } else if (tile.isSplit) {
       for (const dir of tile.splitDirections) {
         const ball = this.createBall(tile, inst.ball.ownerId);
+        ball.speedMultiplier = inst.ball.speedMultiplier; // 부모 속도 상속
         const hash = this.getReflectorHash();
-        const ni = BallSimulationInstance.create(ball, tile, dir, this.currentPhase + 1, hash);
+        const ni = BallSimulationInstance.create(ball, tile, dir, phase + 1, hash);
+        ni.localPhase = inst.localPhase;
+        ni.localPhaseRate = inst.localPhaseRate;
         ni.copyHistoryFrom(inst);
         newInstances.push(ni);
       }

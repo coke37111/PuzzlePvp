@@ -1,6 +1,6 @@
 // === 레이아웃 ===
 export const TILE_SIZE = 52;
-export const BALL_RADIUS = 10;
+export const BALL_RADIUS = 7;
 export const HP_BAR_HEIGHT = 8;
 
 // === 플레이어 색상 ===
@@ -9,15 +9,16 @@ export const PLAYER_COLORS_DARK = [0x224488, 0x882222];
 
 // === 공 색상 (팀 컬러: 인덱스 0=내 공, 1=적 공) ===
 export const BALL_COLOR = 0xffffff;
-export const BALL_TEAM_COLORS = [0x66aaff, 0xff6666];
-export const BALL_POWERED_SCALE = 1.35;
+export const BALL_TEAM_COLORS = [0x88ccff, 0xff8888];
 
-// === 몬스터 ===
-export const MONSTER_COLOR = 0xff8800;
-export const MONSTER_BORDER = 0xffcc00;
+// === 몬스터 타입별 색상 (Orange=공격력, White=공갯수, LightBlue=공속도, Purple=반사판확장) ===
+export const MONSTER_COLORS  = [0xff8800, 0xffffff, 0x44ddff, 0xcc44ff]; // Orange, White, LightBlue, Purple
+export const MONSTER_BORDERS = [0xffcc00, 0xaaaaaa, 0x0099cc, 0x8800cc]; // 테두리
 
-// === 아이템 ===
-export const ITEM_COLOR = 0xff4444;
+// === 아이템 타입별 색상 (PowerUp, BallCount, SpeedUp, ReflectorExpand) ===
+// DropItemType enum: 1=PowerUp, 2=BallCount, 3=SpeedUp, 4=ReflectorExpand (인덱스 0 = 미사용 패딩)
+export const ITEM_COLOR = 0xff4444; // 하위호환
+export const ITEM_COLORS = [0xff3333, 0xffffff, 0x44ddff, 0xcc44ff]; // PowerUp, BallCount, SpeedUp, ReflectorExpand
 
 // === 배경/그리드 ===
 export const BG_COLOR = 0x12121e;

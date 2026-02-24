@@ -38,6 +38,9 @@ import {
   ItemDroppedMsg,
   ItemPickedUpMsg,
   BallPoweredUpMsg,
+  PlayerBallCountUpMsg,
+  PlayerSpeedUpMsg,
+  PlayerReflectorExpandMsg,
   SpawnHealedMsg,
   CoreHealedMsg,
 } from '@puzzle-pvp/shared';
@@ -83,6 +86,7 @@ export class GameRoom {
         fromY: from.y,
         toX: to.x,
         toY: to.y,
+        speedMultiplier: ball.speedMultiplier,
       };
       this.broadcast(SocketEvent.BALL_MOVED, msg);
     };
@@ -184,8 +188,8 @@ export class GameRoom {
       this.broadcast(SocketEvent.REFLECTOR_STOCK, msg);
     };
 
-    this.simulator.onMonsterSpawned = (id, x, y, hp, maxHp) => {
-      const msg: MonsterSpawnedMsg = { id, x, y, hp, maxHp };
+    this.simulator.onMonsterSpawned = (id, monsterType, x, y, hp, maxHp) => {
+      const msg: MonsterSpawnedMsg = { id, monsterType, x, y, hp, maxHp };
       this.broadcast(SocketEvent.MONSTER_SPAWNED, msg);
     };
 
@@ -217,6 +221,21 @@ export class GameRoom {
     this.simulator.onBallPoweredUp = (ballId, ownerId) => {
       const msg: BallPoweredUpMsg = { ballId, playerId: ownerId };
       this.broadcast(SocketEvent.BALL_POWERED_UP, msg);
+    };
+
+    this.simulator.onPlayerBallCountUp = (playerId, ballCountBonus) => {
+      const msg: PlayerBallCountUpMsg = { playerId, ballCountBonus };
+      this.broadcast(SocketEvent.PLAYER_BALL_COUNT_UP, msg);
+    };
+
+    this.simulator.onPlayerSpeedUp = (playerId, speedBonus) => {
+      const msg: PlayerSpeedUpMsg = { playerId, speedBonus };
+      this.broadcast(SocketEvent.PLAYER_SPEED_UP, msg);
+    };
+
+    this.simulator.onPlayerReflectorExpand = (playerId, reflectorBonus) => {
+      const msg: PlayerReflectorExpandMsg = { playerId, reflectorBonus };
+      this.broadcast(SocketEvent.PLAYER_REFLECTOR_EXPAND, msg);
     };
 
     this.simulator.onSpawnHealed = (event) => {
@@ -255,7 +274,7 @@ export class GameRoom {
 
     const monsters: MonsterInfo[] = this.simulator.getMonsters()
       .filter(m => m.active)
-      .map(m => ({ id: m.id, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp }));
+      .map(m => ({ id: m.id, monsterType: m.type, x: m.x, y: m.y, hp: m.hp, maxHp: m.maxHp }));
     const walls = this.simulator.getWalls().map(w => ({
       playerId: w.ownerId,
       x: w.x,

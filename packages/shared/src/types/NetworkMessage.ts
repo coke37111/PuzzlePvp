@@ -2,6 +2,7 @@ import { ReflectorType } from '../enums/ReflectorType';
 import { Direction } from '../enums/Direction';
 import { MapData } from '../core/MapModel';
 import { DropItemType } from '../core/ItemModel';
+import { MonsterType } from '../core/MonsterModel';
 
 // ─── 클라이언트 → 서버 ───────────────────────────────────────────
 
@@ -52,6 +53,7 @@ export interface CoreInfo {
 
 export interface MonsterInfo {
   id: number;
+  monsterType: MonsterType;
   x: number;
   y: number;
   hp: number;
@@ -75,6 +77,7 @@ export interface MatchFoundMsg {
 
 export interface MonsterSpawnedMsg {
   id: number;
+  monsterType: MonsterType;
   x: number;
   y: number;
   hp: number;
@@ -117,6 +120,21 @@ export interface ItemPickedUpMsg {
 export interface BallPoweredUpMsg {
   ballId: number;
   playerId: number;
+}
+
+export interface PlayerBallCountUpMsg {
+  playerId: number;
+  ballCountBonus: number; // 현재 보너스 총합
+}
+
+export interface PlayerSpeedUpMsg {
+  playerId: number;
+  speedBonus: number; // 현재 보너스 총합
+}
+
+export interface PlayerReflectorExpandMsg {
+  playerId: number;
+  reflectorBonus: number; // 현재 보너스 총합 (보드 최대치 +N)
 }
 
 export interface SpawnHealedMsg {
@@ -187,6 +205,7 @@ export interface BallMovedMsg {
   fromY: number;
   toX: number;
   toY: number;
+  speedMultiplier: number;
 }
 
 export interface BallEndedMsg {
@@ -275,6 +294,9 @@ export const SocketEvent = {
   ITEM_DROPPED: 'item_dropped',
   ITEM_PICKED_UP: 'item_picked_up',
   BALL_POWERED_UP: 'ball_powered_up',
+  PLAYER_BALL_COUNT_UP: 'player_ball_count_up',
+  PLAYER_SPEED_UP: 'player_speed_up',
+  PLAYER_REFLECTOR_EXPAND: 'player_reflector_expand',
   SPAWN_HEALED: 'spawn_healed',
   CORE_HEALED: 'core_healed',
 } as const;

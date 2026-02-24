@@ -33,7 +33,7 @@ export function animBallSpawn(
   });
 }
 
-/** 공 종료: scale→1.5, alpha→0 + 파티클 버스트 */
+/** 공 종료: scale→현재×1.3, alpha→0 + 파티클 버스트 */
 export function animBallEnd(
   scene: Phaser.Scene,
   container: Phaser.GameObjects.Container,
@@ -42,11 +42,13 @@ export function animBallEnd(
   cy: number,
   color: number,
   onComplete: () => void,
+  currentScale: number = 1,
 ): void {
+  const endScale = currentScale * 1.3;
   scene.tweens.add({
     targets,
-    scaleX: 1.5,
-    scaleY: 1.5,
+    scaleX: endScale,
+    scaleY: endScale,
     alpha: 0,
     duration: ANIM_BALL_END,
     ease: 'Quad.easeOut',
@@ -231,14 +233,15 @@ function lerpColor(a: number, b: number, t: number): number {
   return (r << 16) | (g << 8) | bl;
 }
 
-/** 힐 팝업: "+1" 초록색 텍스트가 위로 날아가며 페이드 아웃 */
+/** 힐 팝업: "+N" 초록색 텍스트가 위로 날아가며 페이드 아웃 */
 export function animHealPopup(
   scene: Phaser.Scene,
   container: Phaser.GameObjects.Container,
   worldX: number,
   worldY: number,
+  amount: number = 1,
 ): void {
-  const text = scene.add.text(worldX, worldY, '+1', {
+  const text = scene.add.text(worldX, worldY, `+${toAbbreviatedString(amount)}`, {
     fontSize: '16px',
     color: '#44ff88',
     fontStyle: 'bold',
@@ -265,6 +268,15 @@ export function animHealPopup(
   });
 }
 
+/** 숫자를 1000 단위로 축약 (1.2K, 3.5M, 2.1B, 1.0T) */
+export function toAbbreviatedString(value: number): string {
+  if (value >= 1_000_000_000_000) return (value / 1_000_000_000_000).toFixed(1) + 'T';
+  if (value >= 1_000_000_000) return (value / 1_000_000_000).toFixed(1) + 'B';
+  if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + 'M';
+  if (value >= 1_000) return (value / 1_000).toFixed(1) + 'K';
+  return `${value}`;
+}
+
 /** 데미지 팝업: "-N" 텍스트가 위로 날아가며 페이드 아웃 */
 export function animDamagePopup(
   scene: Phaser.Scene,
@@ -273,7 +285,7 @@ export function animDamagePopup(
   worldY: number,
   damage: number,
 ): void {
-  const text = scene.add.text(worldX, worldY, `-${damage}`, {
+  const text = scene.add.text(worldX, worldY, `-${toAbbreviatedString(damage)}`, {
     fontSize: '16px',
     color: '#ffffff',
     fontStyle: 'bold',

@@ -15,7 +15,7 @@ export type { BattleConfig, SpawnEvent, BattleResult, WallState, ItemCounts, Wal
 export { createTileData, EMPTY_TILE_INDEX } from './core/TileData';
 export { TileModel } from './core/TileModel';
 export { BallModel } from './core/BallModel';
-export { MonsterModel } from './core/MonsterModel';
+export { MonsterModel, MonsterType } from './core/MonsterModel';
 export { DroppedItemModel, DropItemType } from './core/ItemModel';
 export { MapModel, createBattleMap, createDefaultBattleMapData } from './core/MapModel';
 export { BallSimulatorHistory } from './core/BallSimulatorHistory';
@@ -39,6 +39,7 @@ export type {
   ReflectorStockMsg,
   MonsterSpawnedMsg, MonsterDamagedMsg, MonsterKilledMsg, MonsterMovedMsg,
   ItemDroppedMsg, ItemPickedUpMsg, BallPoweredUpMsg,
+  PlayerBallCountUpMsg, PlayerSpeedUpMsg, PlayerReflectorExpandMsg,
   SpawnHealedMsg, CoreHealedMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';

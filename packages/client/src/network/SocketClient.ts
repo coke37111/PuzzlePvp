@@ -30,6 +30,9 @@ import {
   ItemDroppedMsg,
   ItemPickedUpMsg,
   BallPoweredUpMsg,
+  PlayerBallCountUpMsg,
+  PlayerSpeedUpMsg,
+  PlayerReflectorExpandMsg,
   SpawnHealedMsg,
   CoreHealedMsg,
   ReflectorType,
@@ -69,6 +72,9 @@ export class SocketClient {
   onItemDropped?: (msg: ItemDroppedMsg) => void;
   onItemPickedUp?: (msg: ItemPickedUpMsg) => void;
   onBallPoweredUp?: (msg: BallPoweredUpMsg) => void;
+  onPlayerBallCountUp?: (msg: PlayerBallCountUpMsg) => void;
+  onPlayerSpeedUp?: (msg: PlayerSpeedUpMsg) => void;
+  onPlayerReflectorExpand?: (msg: PlayerReflectorExpandMsg) => void;
   onSpawnHealed?: (msg: SpawnHealedMsg) => void;
   onCoreHealed?: (msg: CoreHealedMsg) => void;
   onConnected?: () => void;
@@ -120,6 +126,9 @@ export class SocketClient {
     this.socket.on(SocketEvent.ITEM_DROPPED, (msg: ItemDroppedMsg) => this.onItemDropped?.(msg));
     this.socket.on(SocketEvent.ITEM_PICKED_UP, (msg: ItemPickedUpMsg) => this.onItemPickedUp?.(msg));
     this.socket.on(SocketEvent.BALL_POWERED_UP, (msg: BallPoweredUpMsg) => this.onBallPoweredUp?.(msg));
+    this.socket.on(SocketEvent.PLAYER_BALL_COUNT_UP, (msg: PlayerBallCountUpMsg) => this.onPlayerBallCountUp?.(msg));
+    this.socket.on(SocketEvent.PLAYER_SPEED_UP, (msg: PlayerSpeedUpMsg) => this.onPlayerSpeedUp?.(msg));
+    this.socket.on(SocketEvent.PLAYER_REFLECTOR_EXPAND, (msg: PlayerReflectorExpandMsg) => this.onPlayerReflectorExpand?.(msg));
     this.socket.on(SocketEvent.SPAWN_HEALED, (msg: SpawnHealedMsg) => this.onSpawnHealed?.(msg));
     this.socket.on(SocketEvent.CORE_HEALED, (msg: CoreHealedMsg) => this.onCoreHealed?.(msg));
   }

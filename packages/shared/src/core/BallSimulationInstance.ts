@@ -17,6 +17,11 @@ export class BallSimulationInstance {
   readonly createdPhase: number;
   readonly history: BallSimulatorHistory = new BallSimulatorHistory();
 
+  /** 인스턴스 자체의 누적 페이즈 비율 (speedMultiplier 반영) */
+  localPhaseRate: number = 0;
+  /** 인스턴스의 현재 정수 페이즈 */
+  localPhase: number = 0;
+
   get isEnd(): boolean {
     return this.endReason !== EndReason.None;
   }

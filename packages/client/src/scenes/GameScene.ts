@@ -9,6 +9,9 @@ import {
   ItemDroppedMsg,
   ItemPickedUpMsg,
   BallPoweredUpMsg,
+  PlayerBallCountUpMsg,
+  PlayerSpeedUpMsg,
+  PlayerReflectorExpandMsg,
   SpawnHealedMsg,
   CoreHealedMsg,
   MatchFoundMsg,
@@ -36,13 +39,15 @@ import {
   createBattleTileRegistry,
   MapModel,
   EMPTY_TILE_INDEX,
+  MonsterType,
+  DropItemType,
 } from '@puzzle-pvp/shared';
 
 import {
   TILE_SIZE, BALL_RADIUS, HP_BAR_HEIGHT,
   PLAYER_COLORS, PLAYER_COLORS_DARK, BALL_COLOR,
-  BALL_TEAM_COLORS, BALL_POWERED_SCALE,
-  MONSTER_COLOR, MONSTER_BORDER, ITEM_COLOR,
+  BALL_TEAM_COLORS,
+  MONSTER_COLORS, MONSTER_BORDERS, ITEM_COLORS,
   BG_COLOR,
   TILE_EMPTY_COLOR, TILE_P1_SPAWN_COLOR, TILE_P2_SPAWN_COLOR,
   TILE_P1_CORE_COLOR, TILE_P2_CORE_COLOR,
@@ -69,6 +74,7 @@ import {
   getHpColor,
   animDamagePopup,
   animHealPopup,
+  toAbbreviatedString,
 } from '../visual/VisualEffects';
 
 interface BallVisual {
@@ -155,7 +161,6 @@ export class GameScene extends Phaser.Scene {
   private serverCores: CoreInfo[] = [];
   private timePerPhase: number = 0.3;
   private currentPhaseNumber: number = 0;
-  private static readonly SPEED_RAMP_TURNS = 10;
 
   private gridOffsetX: number = 0;
   private gridOffsetY: number = 0;
@@ -211,6 +216,7 @@ export class GameScene extends Phaser.Scene {
   private hpTweens: Map<string, Phaser.Tweens.Tween> = new Map();
   private hoverHighlight: Phaser.GameObjects.Rectangle | null = null;
   private endingBalls: Set<number> = new Set();
+  private ballMoveTweens: Map<number, Phaser.Tweens.Tween> = new Map();
   private playerPowerLevel: Map<number, number> = new Map();
   private enemyZoneTiles: Set<string> = new Set(); // "x,y" 형식
   private enemyZoneOverlays: Map<number, Phaser.GameObjects.Rectangle[]> = new Map(); // spawnId → overlays
@@ -291,6 +297,7 @@ export class GameScene extends Phaser.Scene {
     this.wallVisuals.clear();
     this.hpTweens.clear();
     this.endingBalls.clear();
+    this.ballMoveTweens.clear();
     this.playerPowerLevel.clear();
     this.enemyZoneTiles.clear();
     this.enemyZoneOverlays.clear();
@@ -319,6 +326,7 @@ export class GameScene extends Phaser.Scene {
     this.muteBtnText = null;
 
     this.sfx = new SoundManager();
+    this.sfx.muted = localStorage.getItem('sfx_muted') === '1';
     this.monsterVisuals = new Map();
     this.itemVisuals = new Map();
 
@@ -328,7 +336,7 @@ export class GameScene extends Phaser.Scene {
       this.drawWall(w.x, w.y, w.hp, w.maxHp);
     }
     for (const m of this._initMonsters) {
-      this.drawMonster(m.id, m.x, m.y, m.hp, m.maxHp);
+      this.drawMonster(m.id, m.monsterType, m.x, m.y, m.hp, m.maxHp);
     }
     this.createReflectorStockUI();
     this.updateReflectorStockUI(this.myReflectorStock, 0); // 초기 풀스톡 표시
@@ -372,6 +380,9 @@ export class GameScene extends Phaser.Scene {
     this.socket.onItemDropped = undefined;
     this.socket.onItemPickedUp = undefined;
     this.socket.onBallPoweredUp = undefined;
+    this.socket.onPlayerBallCountUp = undefined;
+    this.socket.onPlayerSpeedUp = undefined;
+    this.socket.onPlayerReflectorExpand = undefined;
     this.socket.onSpawnHealed = undefined;
     this.socket.onCoreHealed = undefined;
     this.monsterVisuals.clear();
@@ -716,7 +727,7 @@ export class GameScene extends Phaser.Scene {
     this.tilesLayer.add(hpBar);
 
     // HP 텍스트
-    const label = this.add.text(px, py + 4, String(maxHp), {
+    const label = this.add.text(px, py + 4, toAbbreviatedString(maxHp), {
       fontSize: '14px',
       color: '#ffffff',
       fontStyle: 'bold',
@@ -803,7 +814,7 @@ export class GameScene extends Phaser.Scene {
     this.tilesLayer.add(diamond);
 
     // HP 텍스트
-    const label = this.add.text(px, py + 8, String(maxHp), {
+    const label = this.add.text(px, py + 8, toAbbreviatedString(maxHp), {
       fontSize: '12px',
       color: '#ffff88',
       fontStyle: 'bold',
@@ -909,7 +920,7 @@ export class GameScene extends Phaser.Scene {
 
     const oldHp = visual.currentHp;
     visual.currentHp = hp;
-    visual.label.setText(String(hp));
+    visual.label.setText(toAbbreviatedString(hp));
 
     const ratio = hp / visual.maxHp;
     const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
@@ -958,7 +969,7 @@ export class GameScene extends Phaser.Scene {
 
   private getBallScale(playerId: number): number {
     const level = this.playerPowerLevel.get(playerId) ?? 0;
-    return Math.min(0.5 + level * 0.05, 1.5);
+    return Math.min(1.0 + level * 0.01, 2.0);
   }
 
   private clearSpawnCountdown(visual: SpawnVisual): void {
@@ -978,7 +989,7 @@ export class GameScene extends Phaser.Scene {
 
     const oldHp = visual.currentHp;
     visual.currentHp = hp;
-    visual.label.setText(String(hp));
+    visual.label.setText(toAbbreviatedString(hp));
 
     const ratio = hp / visual.maxHp;
     const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
@@ -1001,7 +1012,7 @@ export class GameScene extends Phaser.Scene {
     } else if (hp > oldHp) {
       const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       const popupY = visual.y * TILE_SIZE;
-      animHealPopup(this, this.tilesLayer, popupX, popupY);
+      animHealPopup(this, this.tilesLayer, popupX, popupY, hp - oldHp);
     }
   }
 
@@ -1161,16 +1172,18 @@ export class GameScene extends Phaser.Scene {
     const BTN_W = 52, BTN_H = 20;
     const btnX = 8 + BTN_W / 2;
     const btnY = 52;
-    this.muteBtnBg = this.add.rectangle(btnX, btnY, BTN_W, BTN_H, 0x223322)
-      .setStrokeStyle(1, 0x448844)
+    const initMuted = this.sfx.muted;
+    this.muteBtnBg = this.add.rectangle(btnX, btnY, BTN_W, BTN_H, initMuted ? 0x222222 : 0x223322)
+      .setStrokeStyle(1, initMuted ? 0x444444 : 0x448844)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    this.muteBtnText = this.add.text(btnX, btnY, '♪ ON', {
-      fontSize: '11px', color: '#88ff88', fontStyle: 'bold',
+    this.muteBtnText = this.add.text(btnX, btnY, initMuted ? '✕ OFF' : '♪ ON', {
+      fontSize: '11px', color: initMuted ? '#888888' : '#88ff88', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(11);
     this.muteBtnBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e.stopPropagation();
       this.sfx.muted = !this.sfx.muted;
+      localStorage.setItem('sfx_muted', this.sfx.muted ? '1' : '0');
       this.muteBtnText!.setText(this.sfx.muted ? '✕ OFF' : '♪ ON');
       this.muteBtnText!.setColor(this.sfx.muted ? '#888888' : '#88ff88');
       this.muteBtnBg!.setFillStyle(this.sfx.muted ? 0x222222 : 0x223322);
@@ -1299,7 +1312,7 @@ export class GameScene extends Phaser.Scene {
       this.phaseCount++;
     }
     if (this.phaseText) {
-      this.phaseText.setText(`${this.phaseCount}`);
+      this.phaseText.setText(toAbbreviatedString(this.phaseCount));
       this.tweens.add({
         targets: this.phaseText,
         scaleX: 1.5, scaleY: 1.5,
@@ -1446,7 +1459,7 @@ export class GameScene extends Phaser.Scene {
         const py = msg.fromY * TILE_SIZE + TILE_SIZE / 2;
         const isMyBall = pending.ownerId === this.myPlayerId;
         const ballColor = BALL_TEAM_COLORS[isMyBall ? 0 : 1];
-        const circle = this.add.circle(px, py, BALL_RADIUS, ballColor, 0.85);
+        const circle = this.add.circle(px, py, BALL_RADIUS, ballColor, 1.0);
         this.ballsLayer.add(circle);
         const shine = this.add.circle(px, py, 4, 0xffffff, 0.4);
         this.ballsLayer.add(shine);
@@ -1459,20 +1472,19 @@ export class GameScene extends Phaser.Scene {
 
       const toX = msg.toX * TILE_SIZE + TILE_SIZE / 2;
       const toY = msg.toY * TILE_SIZE + TILE_SIZE / 2;
-      // 서버와 동일한 속도 점진 증가 공식으로 현재 tween duration 계산
-      const ramp = GameScene.SPEED_RAMP_TURNS;
-      const t = this.timePerPhase;
-      const effectiveTime = Math.max(t, t * 2 - (this.currentPhaseNumber - 1) * (t / ramp));
-      const duration = effectiveTime * 1000; // 초 → ms
+      // 실제 이동 시간 = timePerPhase / speedMultiplier
+      const duration = (this.timePerPhase / msg.speedMultiplier) * 1000;
 
-      // from→to를 timePerPhase 동안 클라이언트에서 자체 보간
-      this.tweens.add({
+      // movement tween만 교체 — spawn tween(scale/alpha)은 그대로 실행
+      this.ballMoveTweens.get(msg.ballId)?.stop();
+      const moveTween = this.tweens.add({
         targets: [visual.circle, visual.shine],
         x: toX,
         y: toY,
         duration,
         ease: 'Linear',
       });
+      this.ballMoveTweens.set(msg.ballId, moveTween);
     };
 
     this.socket.onBallEnded = (msg: BallEndedMsg) => {
@@ -1483,8 +1495,9 @@ export class GameScene extends Phaser.Scene {
       if (this.endingBalls.has(msg.ballId)) return;
 
       this.endingBalls.add(msg.ballId);
+      this.ballMoveTweens.delete(msg.ballId);
       this.sfx.ballEnd();
-      // 진행 중인 이동 tween 중지
+      // 진행 중인 모든 tween 중지 (spawn/move/powerup 포함)
       this.tweens.killTweensOf(visual.circle);
       this.tweens.killTweensOf(visual.shine);
 
@@ -1503,6 +1516,7 @@ export class GameScene extends Phaser.Scene {
           this.ballVisuals.delete(msg.ballId);
           this.endingBalls.delete(msg.ballId);
         },
+        visual.circle.scaleX,
       );
     };
 
@@ -1553,7 +1567,7 @@ export class GameScene extends Phaser.Scene {
       visual.hpBar.setVisible(true);
       visual.hpBarBg.setVisible(true);
       visual.dirArrow.setVisible(true);
-      visual.label.setText(String(msg.hp)).setColor('#ffffff');
+      visual.label.setText(toAbbreviatedString(msg.hp)).setColor('#ffffff');
 
       // HP 바 풀로 복구
       const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
@@ -1657,7 +1671,7 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onMonsterSpawned = (msg: MonsterSpawnedMsg) => {
-      this.spawnMonster(msg.id, msg.x, msg.y, msg.hp, msg.maxHp);
+      this.spawnMonster(msg.id, msg.monsterType, msg.x, msg.y, msg.hp, msg.maxHp);
     };
 
     this.socket.onMonsterDamaged = (msg: MonsterDamagedMsg) => {
@@ -1673,7 +1687,7 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onItemDropped = (msg: ItemDroppedMsg) => {
-      this.drawItem(msg.itemId, msg.x, msg.y);
+      this.drawItem(msg.itemId, msg.x, msg.y, msg.itemType);
     };
 
     this.socket.onItemPickedUp = (msg: ItemPickedUpMsg) => {
@@ -1687,6 +1701,7 @@ export class GameScene extends Phaser.Scene {
       const newScale = this.getBallScale(msg.playerId);
       for (const visual of this.ballVisuals.values()) {
         if (visual.ownerId !== msg.playerId) continue;
+        if (this.endingBalls.has(visual.ballId)) continue;
         this.tweens.add({
           targets: [visual.circle, visual.shine],
           scaleX: newScale,
@@ -1697,36 +1712,50 @@ export class GameScene extends Phaser.Scene {
       }
     };
 
+    this.socket.onPlayerBallCountUp = (_msg: PlayerBallCountUpMsg) => {
+      // 필요 시 UI 표시 (예: 공 갯수 카운터)
+    };
+
+    this.socket.onPlayerSpeedUp = (_msg: PlayerSpeedUpMsg) => {
+      // 필요 시 UI 표시 (예: 속도 카운터)
+    };
+
     this.socket.onSpawnHealed = (msg: SpawnHealedMsg) => {
       const visual = this.spawnVisuals.get(msg.spawnId);
       if (!visual || visual.destroyed) return;
+      const healAmount = msg.hp - visual.currentHp;
       visual.currentHp = msg.hp;
       visual.maxHp = msg.maxHp;
-      visual.label.setText(String(msg.hp));
+      visual.label.setText(toAbbreviatedString(msg.hp));
       const ratio = msg.hp / msg.maxHp;
       const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       visual.hpBar.setFillStyle(getHpColor(ratio));
       animHpBar(this, visual.hpBar, baseX, ratio, `hp_${msg.spawnId}`, this.hpTweens);
       const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       const popupY = visual.y * TILE_SIZE;
-      animHealPopup(this, this.tilesLayer, popupX, popupY);
+      animHealPopup(this, this.tilesLayer, popupX, popupY, healAmount);
       this.sfx.healEffect();
     };
 
     this.socket.onCoreHealed = (msg: CoreHealedMsg) => {
       const visual = this.coreVisuals.get(msg.coreId);
       if (!visual || visual.destroyed) return;
+      const healAmount = msg.hp - visual.currentHp;
       visual.currentHp = msg.hp;
       visual.maxHp = msg.maxHp;
-      visual.label.setText(String(msg.hp));
+      visual.label.setText(toAbbreviatedString(msg.hp));
       const ratio = msg.hp / msg.maxHp;
       const baseX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       visual.hpBar.setFillStyle(getHpColor(ratio));
       animHpBar(this, visual.hpBar, baseX, ratio, `core_hp_${msg.coreId}`, this.hpTweens);
       const popupX = visual.x * TILE_SIZE + TILE_SIZE / 2;
       const popupY = visual.y * TILE_SIZE;
-      animHealPopup(this, this.tilesLayer, popupX, popupY);
+      animHealPopup(this, this.tilesLayer, popupX, popupY, healAmount);
       this.sfx.healEffect();
+    };
+
+    this.socket.onPlayerReflectorExpand = (_msg: PlayerReflectorExpandMsg) => {
+      // 필요 시 UI 표시 (예: 반사판 슬롯 갱신)
     };
 
     this.socket.onDisconnected = () => {
@@ -1738,7 +1767,7 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
-  private drawMonster(id: number, gridX: number, gridY: number, hp: number, maxHp: number): void {
+  private drawMonster(id: number, monsterType: MonsterType, gridX: number, gridY: number, hp: number, maxHp: number): void {
     const existing = this.monsterVisuals.get(id);
     if (existing) {
       existing.container.destroy();
@@ -1747,17 +1776,19 @@ export class GameScene extends Phaser.Scene {
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
     const s = TILE_SIZE / 2 - 4;
+    const color  = MONSTER_COLORS[monsterType]  ?? MONSTER_COLORS[0];
+    const border = MONSTER_BORDERS[monsterType] ?? MONSTER_BORDERS[0];
 
-    // 주황 다이아몬드
+    // 타입별 색상 다이아몬드
     const g = this.add.graphics();
-    g.fillStyle(MONSTER_COLOR, 0.85);
+    g.fillStyle(color, 0.85);
     g.fillPoints([
       { x: 0, y: -s },
       { x: s, y: 0 },
       { x: 0, y: s },
       { x: -s, y: 0 },
     ], true);
-    g.lineStyle(2, MONSTER_BORDER, 1);
+    g.lineStyle(2, border, 1);
     g.strokePoints([
       { x: 0, y: -s },
       { x: s, y: 0 },
@@ -1770,7 +1801,7 @@ export class GameScene extends Phaser.Scene {
     // HP 바
     const hpBar = this.add.rectangle(0, s + HP_BAR_HEIGHT + 1, TILE_SIZE - 4, HP_BAR_HEIGHT, getHpColor(hp / maxHp)).setOrigin(0.5);
     // HP 텍스트
-    const hpText = this.add.text(0, 0, `${hp}`, {
+    const hpText = this.add.text(0, 0, toAbbreviatedString(hp), {
       fontSize: '12px', color: '#ffffff', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5);
@@ -1803,7 +1834,7 @@ export class GameScene extends Phaser.Scene {
     const damage = mv.currentHp - hp;
     mv.currentHp = hp;
     mv.maxHp = maxHp;
-    mv.hpText.setText(`${hp}`);
+    mv.hpText.setText(toAbbreviatedString(hp));
     const ratio = hp / maxHp;
     mv.hpBar.setFillStyle(getHpColor(ratio));
     mv.hpBar.setDisplaySize((TILE_SIZE - 4) * ratio, HP_BAR_HEIGHT);
@@ -1839,8 +1870,8 @@ export class GameScene extends Phaser.Scene {
     this.monsterVisuals.delete(id);
   }
 
-  private spawnMonster(id: number, gridX: number, gridY: number, hp: number, maxHp: number): void {
-    this.drawMonster(id, gridX, gridY, hp, maxHp);
+  private spawnMonster(id: number, monsterType: MonsterType, gridX: number, gridY: number, hp: number, maxHp: number): void {
+    this.drawMonster(id, monsterType, gridX, gridY, hp, maxHp);
     const mv = this.monsterVisuals.get(id);
     if (!mv) return;
     const container = mv.container;
@@ -1856,21 +1887,31 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private drawItem(id: number, gridX: number, gridY: number): void {
+  private drawItem(id: number, gridX: number, gridY: number, itemType: DropItemType = DropItemType.PowerUp): void {
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+    const color = ITEM_COLORS[itemType - 1] ?? ITEM_COLORS[0];
 
     const g = this.add.graphics();
-    g.fillStyle(ITEM_COLOR, 0.9);
-    // 위쪽 화살표: 줄기 + 삼각형 헤드
-    g.fillRect(-4, 2, 8, 10);
-    g.fillTriangle(-10, 2, 10, 2, 0, -12);
+    g.fillStyle(color, 0.9);
+
+    if (itemType === DropItemType.PowerUp) {
+      // 빨간 위쪽 화살표: 줄기 + 삼각형 헤드
+      g.fillRect(-4, 2, 8, 10);
+      g.fillTriangle(-10, 2, 10, 2, 0, -12);
+    } else if (itemType === DropItemType.BallCount) {
+      // 흰 원
+      g.fillCircle(0, 0, 10);
+    } else if (itemType === DropItemType.SpeedUp) {
+      // 하늘색 위쪽 화살표: 줄기 + 삼각형 헤드
+      g.fillRect(-3, 2, 6, 10);
+      g.fillTriangle(-9, 2, 9, 2, 0, -11);
+    }
 
     const container = this.add.container(px, py - 6, [g]);
     container.setDepth(5);
     this.tilesLayer.add(container);
 
-    // 부유 애니메이션
     this.tweens.add({
       targets: container,
       y: py - 10,
@@ -1909,10 +1950,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private formatHp(n: number): string {
-    if (n >= 1_000_000_000_000) return `${Math.round(n / 1_000_000_000_000)}T`;
-    if (n >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
-    if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-    return `${n}`;
+    return toAbbreviatedString(n);
   }
 
   private drawWall(gridX: number, gridY: number, hp: number, maxHp: number): void {
