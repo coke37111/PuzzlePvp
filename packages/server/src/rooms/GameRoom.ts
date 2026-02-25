@@ -1,4 +1,5 @@
 import { Socket } from 'socket.io';
+import { AIPlayer } from '../ai/AIPlayer';
 import {
   BattleSimulator,
   DEFAULT_BATTLE_CONFIG,
@@ -60,6 +61,7 @@ export class GameRoom {
   private tickTimer: NodeJS.Timeout | null = null;
   private lastTickTime: number = Date.now();
   private layout?: MapLayoutConfig;
+  private aiPlayers: AIPlayer[] = [];
   onDestroy?: () => void;
 
   constructor(id: string, players: Map<number, Socket | null>, playerCount?: number) {
@@ -349,6 +351,16 @@ export class GameRoom {
       socket.emit(SocketEvent.MATCH_FOUND, msg);
     }
 
+    // AI 플레이어 초기화 (null 소켓 슬롯)
+    this.aiPlayers = [];
+    if (this.layout) {
+      for (const [playerId, socket] of this.players) {
+        if (socket !== null) continue;
+        const zone = this.layout.zones.find(z => z.playerId === playerId);
+        if (zone) this.aiPlayers.push(new AIPlayer(playerId, this.simulator, zone));
+      }
+    }
+
     // 서버 틱 시작
     this.lastTickTime = Date.now();
     this.tickTimer = setInterval(() => this.tick(), TICK_INTERVAL_MS);
@@ -395,6 +407,7 @@ export class GameRoom {
     const delta = (now - this.lastTickTime) / 1000;
     this.lastTickTime = now;
     this.simulator.update(delta);
+    for (const ai of this.aiPlayers) ai.update(delta);
   }
 
   private stop(): void {
