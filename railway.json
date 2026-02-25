@@ -5,7 +5,7 @@
     "buildCommand": "npm run build:shared && npm run build --workspace=packages/client && npm run build --workspace=packages/server"
   },
   "deploy": {
-    "startCommand": "NODE_ENV=production npm start --workspace=packages/server",
+    "startCommand": "npm start --workspace=packages/server",
     "healthcheckPath": "/health",
     "restartPolicyType": "ON_FAILURE"
   }
