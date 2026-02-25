@@ -13,6 +13,7 @@ import {
   PlayerSpeedUpMsg,
   PlayerReflectorExpandMsg,
   SpawnHealedMsg,
+  MapLayoutConfig,
   CoreHealedMsg,
   MatchFoundMsg,
   SpawnPointInfo,
@@ -164,8 +165,16 @@ export class GameScene extends Phaser.Scene {
   private timePerPhase: number = 0.3;
   private currentPhaseNumber: number = 0;
 
-  private gridOffsetX: number = 0;
-  private gridOffsetY: number = 0;
+  private uiCamera!: Phaser.Cameras.Scene2D.Camera;
+  private initialZoom: number = 1;
+  private isDragging: boolean = false;
+  private dragStartX: number = 0;
+  private dragStartY: number = 0;
+  private pointerDownX: number = 0;
+  private pointerDownY: number = 0;
+  private readonly DRAG_THRESHOLD = 5;
+  private layout?: MapLayoutConfig;
+  private myMapFocusBtn: Phaser.GameObjects.Rectangle | null = null;
 
   private ballVisuals: Map<number, BallVisual> = new Map();
   private pendingBallSpawns: Map<number, { ownerId: number; phaseNumber: number }> = new Map();
@@ -267,6 +276,7 @@ export class GameScene extends Phaser.Scene {
     this.myReflectorCooldownElapsed = 0;
     this._initMonsters = data.matchData.monsters ?? [];
     this._initWalls = data.matchData.walls ?? [];
+    this.layout = data.matchData.layout;
 
     const registry = createBattleTileRegistry();
     this.mapModel = new MapModel(registry);
@@ -278,16 +288,26 @@ export class GameScene extends Phaser.Scene {
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     const { width, height } = this.scale;
-    this.add.rectangle(0, 0, width, height, BG_COLOR).setOrigin(0, 0);
 
-    const gridW = this.mapData.width * TILE_SIZE;
-    const gridH = this.mapData.height * TILE_SIZE;
-    this.gridOffsetX = (width - gridW) / 2;
-    this.gridOffsetY = (height - gridH) / 2 + 10;
-
-    this.tilesLayer = this.add.container(this.gridOffsetX, this.gridOffsetY);
-    this.ballsLayer = this.add.container(this.gridOffsetX, this.gridOffsetY);
+    // 레이어: 게임 월드(원점 기준) + UI(화면 고정)
+    this.tilesLayer = this.add.container(0, 0);
+    this.ballsLayer = this.add.container(0, 0);
     this.uiLayer = this.add.container(0, 0);
+
+    // 메인 카메라: 게임 월드 줌/팬
+    const worldW = this.mapData.width * TILE_SIZE;
+    const worldH = this.mapData.height * TILE_SIZE;
+    this.initialZoom = Math.min(width / worldW, height / worldH, 1.0);
+    this.cameras.main.setBackgroundColor(BG_COLOR);
+    this.cameras.main.setBounds(0, 0, worldW, worldH);
+    this.cameras.main.setZoom(this.initialZoom);
+    this.cameras.main.centerOn(worldW / 2, worldH / 2);
+    this.cameras.main.ignore(this.uiLayer);
+
+    // UI 카메라: 화면 고정 (줌/스크롤 없음)
+    this.uiCamera = this.cameras.add(0, 0, width, height);
+    this.uiCamera.setScroll(0, 0);
+    this.uiCamera.ignore([this.tilesLayer, this.ballsLayer]);
 
     // 상태 초기화
     this.ballVisuals.clear();
@@ -354,6 +374,10 @@ export class GameScene extends Phaser.Scene {
     this.input.enabled = true;
     this.cameras.main.setZoom(1);
     this.cameras.main.setScroll(0, 0);
+    if (this.uiCamera) {
+      this.cameras.remove(this.uiCamera);
+    }
+    this.myMapFocusBtn = null;
     this.tweens.killAll();
     this.time.removeAllEvents();
     // 다음 게임에서 stale 콜백 방지
@@ -387,6 +411,10 @@ export class GameScene extends Phaser.Scene {
     this.socket.onPlayerReflectorExpand = undefined;
     this.socket.onSpawnHealed = undefined;
     this.socket.onCoreHealed = undefined;
+    this.socket.onTowerBoxDamaged = undefined;
+    this.socket.onTowerBoxBroken = undefined;
+    this.socket.onLobbyUpdate = undefined;
+    this.socket.onPlayerEliminated = undefined;
     this.monsterVisuals.clear();
     this.itemVisuals.clear();
     this.reflectorSlotBgs = [];
@@ -455,8 +483,8 @@ export class GameScene extends Phaser.Scene {
   private readonly SLOT_GAP = 4;
 
   private createReflectorStockUI(): void {
-    const ox = this.gridOffsetX;
-    const oy = this.gridOffsetY;
+    const ox = 8;
+    const sy = SPAWN_GAUGE_HEIGHT + 4;
     this.reflectorSlotBgs = [];
     this.reflectorSlotFills = [];
     this.reflectorSlotLockTexts = [];
@@ -465,13 +493,12 @@ export class GameScene extends Phaser.Scene {
 
     for (let i = 0; i < this.maxReflectorStock; i++) {
       const sx = ox + i * (this.SLOT_SIZE + this.SLOT_GAP);
-      const sy = oy - this.SLOT_SIZE - 6;
 
       // 슬롯 배경 (어두운 색)
       const bg = this.add.rectangle(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE, 0x111122)
         .setOrigin(0, 0).setDepth(5);
       // 반사판 아이콘 텍스트 (/)
-      this.add.text(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, '/', {
+      const iconText = this.add.text(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, '/', {
         fontSize: '14px', color: '#aaaaff', fontStyle: 'bold',
       }).setOrigin(0.5).setDepth(6);
       // 쿨다운 필: 아이콘 위에 겹쳐서 아래→위로 채워짐 (depth 7 > icon 6)
@@ -485,6 +512,7 @@ export class GameScene extends Phaser.Scene {
         stroke: '#000000', strokeThickness: 2,
       }).setOrigin(0.5).setDepth(8).setVisible(false);
 
+      this.uiLayer.add([bg, iconText, fill, lockText]);
       this.reflectorSlotBgs.push(bg);
       this.reflectorSlotFills.push(fill);
       this.reflectorSlotLockTexts.push(lockText);
@@ -837,9 +865,10 @@ export class GameScene extends Phaser.Scene {
     const myCore = Array.from(this.coreVisuals.values()).find(c => c.ownerId === this.myPlayerId);
     if (!myCore) return;
 
-    const { width, height } = this.scale;
-    const worldX = this.gridOffsetX + myCore.x * TILE_SIZE + TILE_SIZE / 2;
-    const worldY = this.gridOffsetY + myCore.y * TILE_SIZE + TILE_SIZE / 2;
+    const worldX = myCore.x * TILE_SIZE + TILE_SIZE / 2;
+    const worldY = myCore.y * TILE_SIZE + TILE_SIZE / 2;
+    const worldW = this.mapData.width * TILE_SIZE;
+    const worldH = this.mapData.height * TILE_SIZE;
 
     this.input.enabled = false;
     this.cameras.main.pan(worldX, worldY, 700, 'Sine.easeInOut');
@@ -853,12 +882,13 @@ export class GameScene extends Phaser.Scene {
         stroke: '#000000',
         strokeThickness: 3,
       }).setOrigin(0.5).setDepth(300).setAlpha(0);
+      this.tilesLayer.add(label);
       this.tweens.add({ targets: label, alpha: 1, duration: 200 });
 
       this.time.delayedCall(1500, () => {
         this.tweens.add({ targets: label, alpha: 0, duration: 400, onComplete: () => label.destroy() });
-        this.cameras.main.pan(width / 2, height / 2, 700, 'Sine.easeInOut');
-        this.cameras.main.zoomTo(1, 700, 'Sine.easeInOut');
+        this.cameras.main.pan(worldW / 2, worldH / 2, 700, 'Sine.easeInOut');
+        this.cameras.main.zoomTo(this.initialZoom, 700, 'Sine.easeInOut');
         this.time.delayedCall(700, () => { this.input.enabled = true; });
       });
     });
@@ -1027,15 +1057,108 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-ONE', () => this.toggleWallMode());
     this.input.keyboard?.on('keydown-TWO', () => this.useTimeStop());
 
-    this.input.on('pointerdown', (_pointer: Phaser.Input.Pointer) => {
-      const localX = _pointer.x - this.gridOffsetX;
-      const localY = _pointer.y - this.gridOffsetY;
-      const gridX = Math.floor(localX / TILE_SIZE);
-      const gridY = Math.floor(localY / TILE_SIZE);
+    // 마우스 휠: 줌
+    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _gameObjects: unknown, _deltaX: number, deltaY: number) => {
+      const cam = this.cameras.main;
+      const minZoom = Math.min(
+        this.scale.width / (width * TILE_SIZE),
+        this.scale.height / (height * TILE_SIZE),
+        1.0,
+      );
+      const newZoom = Phaser.Math.Clamp(cam.zoom - deltaY * 0.001, minZoom, 3.0);
+      cam.setZoom(newZoom);
+    });
+
+    // 드래그 팬 시작
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      this.pointerDownX = pointer.x;
+      this.pointerDownY = pointer.y;
+      this.dragStartX = pointer.x;
+      this.dragStartY = pointer.y;
+      this.isDragging = false;
+    });
+
+    // 드래그 팬 + 호버 이펙트
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      // 드래그 팬
+      if (pointer.isDown) {
+        const dx = pointer.x - this.pointerDownX;
+        const dy = pointer.y - this.pointerDownY;
+        if (Math.abs(dx) > this.DRAG_THRESHOLD || Math.abs(dy) > this.DRAG_THRESHOLD) {
+          this.isDragging = true;
+        }
+        if (this.isDragging) {
+          const cam = this.cameras.main;
+          cam.scrollX -= (pointer.x - this.dragStartX) / cam.zoom;
+          cam.scrollY -= (pointer.y - this.dragStartY) / cam.zoom;
+          this.dragStartX = pointer.x;
+          this.dragStartY = pointer.y;
+          if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
+          if (this.wallCursor) this.wallCursor.setVisible(false);
+          return;
+        }
+      }
+
+      // 호버 이펙트 (성벽 모드 커서 포함)
+      const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const gridX = Math.floor(worldPoint.x / TILE_SIZE);
+      const gridY = Math.floor(worldPoint.y / TILE_SIZE);
 
       if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) {
-        // 그리드 밖 클릭 시 성벽 모드 해제
-        if (this.wallMode && !_pointer.rightButtonDown()) this.setWallMode(false);
+        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
+        if (this.wallCursor) this.wallCursor.setVisible(false);
+        return;
+      }
+
+      // 성벽 모드: 커서 표시
+      if (this.wallMode) {
+        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
+        const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+        const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+        if (!this.wallCursor) {
+          this.wallCursor = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, WALL_COLOR, 0.5);
+          this.tilesLayer.add(this.wallCursor);
+        }
+        this.wallCursor.setPosition(px, py).setVisible(true);
+        return;
+      }
+
+      if (this.wallCursor) this.wallCursor.setVisible(false);
+
+      const tile = this.mapModel.getTile(gridX, gridY);
+      const hasReflector = this.reflectorVisuals.has(`${gridX},${gridY}`);
+      const isEnemyZone = this.enemyZoneTiles.has(`${gridX},${gridY}`);
+
+      if (!tile || !tile.isReflectorSetable || hasReflector || isEnemyZone) {
+        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
+        return;
+      }
+
+      const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+      const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+
+      if (!this.hoverHighlight) {
+        this.hoverHighlight = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, HOVER_COLOR, HOVER_ALPHA);
+        this.tilesLayer.add(this.hoverHighlight);
+      }
+      this.hoverHighlight.setPosition(px, py).setVisible(true);
+    });
+
+    // 클릭 처리 (드래그와 구분)
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (this.isDragging) {
+        this.isDragging = false;
+        return;
+      }
+      this.isDragging = false;
+
+      // 월드 좌표 변환
+      const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const gridX = Math.floor(worldPoint.x / TILE_SIZE);
+      const gridY = Math.floor(worldPoint.y / TILE_SIZE);
+
+      if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) {
+        if (this.wallMode && !pointer.rightButtonDown()) this.setWallMode(false);
         return;
       }
 
@@ -1044,7 +1167,7 @@ export class GameScene extends Phaser.Scene {
       const existing = this.reflectorVisuals.get(key);
 
       // 우클릭: 내 반사판 즉시 제거 (성벽 모드 해제도)
-      if (_pointer.rightButtonDown()) {
+      if (pointer.rightButtonDown()) {
         if (this.wallMode) {
           this.setWallMode(false);
           return;
@@ -1085,53 +1208,6 @@ export class GameScene extends Phaser.Scene {
         // Backslash → 제거
         this.socket.removeReflector(gridX, gridY);
       }
-    });
-
-    // 호버 이펙트 (성벽 모드 커서 포함)
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      const localX = pointer.x - this.gridOffsetX;
-      const localY = pointer.y - this.gridOffsetY;
-      const gridX = Math.floor(localX / TILE_SIZE);
-      const gridY = Math.floor(localY / TILE_SIZE);
-
-      if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) {
-        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
-        if (this.wallCursor) this.wallCursor.setVisible(false);
-        return;
-      }
-
-      // 성벽 모드: 커서 표시
-      if (this.wallMode) {
-        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
-        const px = gridX * TILE_SIZE + TILE_SIZE / 2;
-        const py = gridY * TILE_SIZE + TILE_SIZE / 2;
-        if (!this.wallCursor) {
-          this.wallCursor = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, WALL_COLOR, 0.5);
-          this.tilesLayer.add(this.wallCursor);
-        }
-        this.wallCursor.setPosition(px, py).setVisible(true);
-        return;
-      }
-
-      if (this.wallCursor) this.wallCursor.setVisible(false);
-
-      const tile = this.mapModel.getTile(gridX, gridY);
-      const hasReflector = this.reflectorVisuals.has(`${gridX},${gridY}`);
-      const isEnemyZone = this.enemyZoneTiles.has(`${gridX},${gridY}`);
-
-      if (!tile || !tile.isReflectorSetable || hasReflector || isEnemyZone) {
-        if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
-        return;
-      }
-
-      const px = gridX * TILE_SIZE + TILE_SIZE / 2;
-      const py = gridY * TILE_SIZE + TILE_SIZE / 2;
-
-      if (!this.hoverHighlight) {
-        this.hoverHighlight = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, HOVER_COLOR, HOVER_ALPHA);
-        this.tilesLayer.add(this.hoverHighlight);
-      }
-      this.hoverHighlight.setPosition(px, py).setVisible(true);
     });
   }
 
@@ -1182,6 +1258,7 @@ export class GameScene extends Phaser.Scene {
     this.muteBtnText = this.add.text(btnX, btnY, initMuted ? '✕ OFF' : '♪ ON', {
       fontSize: '11px', color: initMuted ? '#888888' : '#88ff88', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(11);
+    this.uiLayer.add([this.muteBtnBg, this.muteBtnText]);
     this.muteBtnBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e.stopPropagation();
       this.sfx.muted = !this.sfx.muted;
@@ -1193,11 +1270,13 @@ export class GameScene extends Phaser.Scene {
     });
 
     // 좌상단: 내 팀 (항상 파란색)
-    this.reflectorCountTexts[this.myPlayerId] = this.add.text(
+    const myCountText = this.add.text(
       8, 28,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
       { fontSize: '13px', color: '#4488ff', fontStyle: 'bold' },
     ).setOrigin(0, 0);
+    this.reflectorCountTexts[this.myPlayerId] = myCountText;
+    this.uiLayer.add(myCountText);
 
     // 내 아이템 슬롯 버튼 (좌하단, 터치 가능)
     const SLOT = 56;
@@ -1209,13 +1288,14 @@ export class GameScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x886633)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    this.add.text(wallCX, slotCY - 7, '🧱', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
-    this.add.text(wallCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '1', {
+    const wallEmoji = this.add.text(wallCX, slotCY - 7, '🧱', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const wallKeyLabel = this.add.text(wallCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '1', {
       fontSize: '11px', color: '#ffcc44', fontStyle: 'bold',
     }).setOrigin(0, 0).setDepth(12);
     this.itemSlotWallText = this.add.text(wallCX, slotCY + 18, `x${INITIAL_WALL_COUNT}`, {
       fontSize: '13px', color: '#ddaa44', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(11);
+    this.uiLayer.add([this.itemSlotWallBg, wallEmoji, wallKeyLabel, this.itemSlotWallText]);
     this.itemSlotWallBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e.stopPropagation();
       this.toggleWallMode();
@@ -1225,41 +1305,49 @@ export class GameScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x8844ff)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    this.add.text(tsCX, slotCY - 7, '⏸', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
-    this.add.text(tsCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '2', {
+    const tsEmoji = this.add.text(tsCX, slotCY - 7, '⏸', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const tsKeyLabel = this.add.text(tsCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '2', {
       fontSize: '11px', color: '#aa88ff', fontStyle: 'bold',
     }).setOrigin(0, 0).setDepth(12);
     this.itemSlotTsText = this.add.text(tsCX, slotCY + 18, `x${INITIAL_TIME_STOP_COUNT}`, {
       fontSize: '13px', color: '#aa88ff', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(11);
+    this.uiLayer.add([this.itemSlotTsBg, tsEmoji, tsKeyLabel, this.itemSlotTsText]);
     this.itemSlotTsBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e.stopPropagation();
       this.useTimeStop();
     });
 
     // 우상단: 상대 팀 (항상 빨간색)
-    this.reflectorCountTexts[opponentId] = this.add.text(
+    const oppCountText = this.add.text(
       width - 8, 8,
       `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
       { fontSize: '13px', color: '#ff4444', fontStyle: 'bold' },
     ).setOrigin(1, 0);
+    this.reflectorCountTexts[opponentId] = oppCountText;
+    this.uiLayer.add(oppCountText);
 
-    this.itemUiTexts.wall[opponentId as 0|1] = this.add.text(
+    const oppWallText = this.add.text(
       width - 8, 26,
       `${INITIAL_WALL_COUNT} [1]🧱`,
       { fontSize: '12px', color: '#ddaa44', fontStyle: 'bold' },
     ).setOrigin(1, 0);
+    this.itemUiTexts.wall[opponentId as 0|1] = oppWallText;
+    this.uiLayer.add(oppWallText);
 
-    this.itemUiTexts.timeStop[opponentId as 0|1] = this.add.text(
+    const oppTsText = this.add.text(
       width - 8, 42,
       `${INITIAL_TIME_STOP_COUNT} [2]⏸`,
       { fontSize: '12px', color: '#aa88ff', fontStyle: 'bold' },
     ).setOrigin(1, 0);
+    this.itemUiTexts.timeStop[opponentId as 0|1] = oppTsText;
+    this.uiLayer.add(oppTsText);
 
-    this.add.text(width / 2, 8, '터치: / → \\ → 제거 | 우클릭: 제거', {
+    const helpText = this.add.text(width / 2, 8, '터치: / → \\ → 제거 | 우클릭: 제거', {
       fontSize: '10px',
       color: '#555566',
     }).setOrigin(0.5, 0);
+    this.uiLayer.add(helpText);
 
     // 성벽 모드 안내 텍스트
     this.wallModeText = this.add.text(
@@ -1267,6 +1355,7 @@ export class GameScene extends Phaser.Scene {
       '🧱 성벽 설치 모드\n클릭: 설치 | 우클릭/ESC: 취소',
       { fontSize: '14px', color: '#ddaa44', fontStyle: 'bold', align: 'center', backgroundColor: '#00000088', padding: { x: 10, y: 6 } },
     ).setOrigin(0.5).setDepth(100).setVisible(false);
+    this.uiLayer.add(this.wallModeText);
 
     // 시간 정지 오버레이 (초기 숨김)
     this.timeStopOverlay = this.add.rectangle(0, 0, width, height, 0x220044, TIME_STOP_OVERLAY_ALPHA)
@@ -1284,19 +1373,21 @@ export class GameScene extends Phaser.Scene {
       width / 2 - 150, height / 2 + 20,
       300, 18, TIME_STOP_GAUGE_COLOR,
     ).setOrigin(0, 0.5).setDepth(152).setVisible(false);
+    this.uiLayer.add([this.timeStopOverlay, this.timeStopLabel, this.timeStopGaugeBg, this.timeStopGauge]);
 
     // ESC로 성벽 모드 해제
     this.input.keyboard?.on('keydown-ESC', () => {
       if (this.wallMode) this.setWallMode(false);
     });
 
-    // 페이즈 카운터 (게이지 아래, 보드 위)
-    const phaseY = SPAWN_GAUGE_HEIGHT + (this.gridOffsetY - SPAWN_GAUGE_HEIGHT) / 2;
+    // 페이즈 카운터 (상단 게이지 바로 아래)
+    const phaseY = 28;
     this.phaseText = this.add.text(width / 2, phaseY, '1', {
       fontSize: '20px',
       color: '#44ccff',
       fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(5).setAlpha(0.55);
+    this.uiLayer.add(this.phaseText);
 
     // 스폰 타이밍 게이지 (상단)
     this.spawnGaugeBg = this.add.rectangle(0, 0, width, SPAWN_GAUGE_HEIGHT, 0x111133)
@@ -1304,6 +1395,10 @@ export class GameScene extends Phaser.Scene {
     this.spawnGaugeFill = this.add.rectangle(0, 0, width, SPAWN_GAUGE_HEIGHT, SPAWN_GAUGE_COLOR)
       .setOrigin(0, 0).setDepth(6);
     this.spawnGaugeFill.scaleX = 0;
+    this.uiLayer.add([this.spawnGaugeBg, this.spawnGaugeFill]);
+
+    // "내 맵" 포커스 버튼
+    this.createMyMapButton();
   }
 
   private startSpawnGauge(phaseNumber?: number): void {
@@ -1337,21 +1432,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private shakeBoard(): void {
-    const origX = this.gridOffsetX;
-    const origY = this.gridOffsetY;
-    const layers = [this.tilesLayer, this.ballsLayer];
-    const steps = [4, -4, 3, -2, 1, 0];
-    let i = 0;
-    const next = () => {
-      if (i >= steps.length) {
-        layers.forEach(l => l.setPosition(origX, origY));
-        return;
-      }
-      layers.forEach(l => l.setPosition(origX + steps[i], origY));
-      i++;
-      this.time.delayedCall(15, next);
-    };
-    next();
+    this.cameras.main.shake(200, 0.007);
   }
 
   private updateReflectorCount(): void {
@@ -1399,6 +1480,7 @@ export class GameScene extends Phaser.Scene {
       backgroundColor: '#442222',
       padding: { x: 12, y: 6 },
     }).setOrigin(0.5).setDepth(200).setAlpha(0);
+    this.uiLayer.add(toast);
 
     this.tweens.add({
       targets: toast,
@@ -2081,6 +2163,57 @@ export class GameScene extends Phaser.Scene {
     this.timeStopGaugeBg?.setVisible(false);
     this.timeStopGauge?.setVisible(false);
     if (this.timeStopGauge) this.tweens.killTweensOf(this.timeStopGauge);
+  }
+
+  private createMyMapButton(): void {
+    const { width, height } = this.scale;
+    const btnW = 64, btnH = 22;
+    const btnX = width - btnW / 2 - 8;
+    const btnY = height - btnH / 2 - 8;
+
+    const btn = this.add.rectangle(btnX, btnY, btnW, btnH, 0x334488, 0.85)
+      .setStrokeStyle(1, 0x6688cc)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(10);
+    const label = this.add.text(btnX, btnY, '내 맵', {
+      fontSize: '13px', color: '#aaccff', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(11);
+    this.uiLayer.add([btn, label]);
+    this.myMapFocusBtn = btn;
+
+    btn.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      this.focusOnMyZone(true);
+    });
+  }
+
+  private focusOnMyZone(animate: boolean): void {
+    const worldW = this.mapData.width * TILE_SIZE;
+    const worldH = this.mapData.height * TILE_SIZE;
+    let cx = worldW / 2;
+    let cy = worldH / 2;
+
+    if (this.layout) {
+      const zone = this.layout.zones.find(z => z.playerId === this.myPlayerId);
+      if (zone) {
+        cx = (zone.originX + zone.width / 2) * TILE_SIZE;
+        cy = (zone.originY + zone.height / 2) * TILE_SIZE;
+      }
+    } else {
+      const myCore = Array.from(this.coreVisuals.values()).find(c => c.ownerId === this.myPlayerId);
+      if (myCore) {
+        cx = myCore.x * TILE_SIZE + TILE_SIZE / 2;
+        cy = myCore.y * TILE_SIZE + TILE_SIZE / 2;
+      }
+    }
+
+    if (animate) {
+      this.cameras.main.pan(cx, cy, 500, 'Sine.easeInOut');
+      this.cameras.main.zoomTo(1.0, 500, 'Sine.easeInOut');
+    } else {
+      this.cameras.main.centerOn(cx, cy);
+      this.cameras.main.setZoom(1.0);
+    }
   }
 
   private drawReflector(gridX: number, gridY: number, type: ReflectorType, playerId: number): void {
