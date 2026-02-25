@@ -11,6 +11,10 @@ export interface MapData {
   tiles: number[][];
   /** Portal 연결: portalGroupId → [tile1Index, tile2Index] */
   portalGroups?: Record<number, number[]>;
+  /** N인 스폰 배정 (세션 2에서 활성화, 없으면 레거시 1v1 경로) */
+  spawnAssignments?: unknown[];
+  /** N인 코어 배정 (세션 2에서 활성화) */
+  coreAssignments?: unknown[];
 }
 
 export interface ReflectorPlacement {

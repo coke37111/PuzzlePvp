@@ -3,13 +3,33 @@ export const TILE_SIZE = 52;
 export const BALL_RADIUS = 7;
 export const HP_BAR_HEIGHT = 8;
 
-// === 플레이어 색상 ===
-export const PLAYER_COLORS = [0x4488ff, 0xff4444];
-export const PLAYER_COLORS_DARK = [0x224488, 0x882222];
+// === 팀 색상 (8팀 지원, 인덱스 0=내 팀/파랑, 1=상대 팀/빨강, 2~7=추가 팀) ===
+export const TEAM_COLORS: number[] = [
+  0x4488ff, // 파랑 (팀0/내 팀)
+  0xff4444, // 빨강 (팀1/상대 팀)
+  0x44cc44, // 초록
+  0xffaa00, // 주황
+  0xcc44ff, // 보라
+  0x44ffcc, // 청록
+  0xff88cc, // 핑크
+  0xffff44, // 노랑
+];
+
+export const TEAM_COLORS_DARK: number[] = [
+  0x224488, 0x882222, 0x228822, 0x885500,
+  0x662288, 0x228866, 0x884466, 0x888822,
+];
+
+// === 레거시 2인 색상 (하위호환) ===
+export const PLAYER_COLORS = TEAM_COLORS.slice(0, 2);
+export const PLAYER_COLORS_DARK = TEAM_COLORS_DARK.slice(0, 2);
 
 // === 공 색상 (팀 컬러: 인덱스 0=내 공, 1=적 공) ===
 export const BALL_COLOR = 0xffffff;
-export const BALL_TEAM_COLORS = [0x88ccff, 0xff8888];
+export const BALL_TEAM_COLORS: number[] = [
+  0x88ccff, 0xff8888, 0x88ff88, 0xffcc88,
+  0xdd88ff, 0x88ffdd, 0xffaadd, 0xffff88,
+];
 
 // === 몬스터 타입별 색상 (Orange=공격력, White=공갯수, LightBlue=공속도, Purple=반사판확장) ===
 export const MONSTER_COLORS  = [0xff8800, 0xffffff, 0x44ddff, 0xcc44ff]; // Orange, White, LightBlue, Purple

@@ -37,7 +37,10 @@ const rooms = new Map<string, GameRoom>();
 
 const matchmaking = new MatchmakingQueue((p1: Socket, p2: Socket) => {
   const roomId = `room_${roomCounter++}`;
-  const room = new GameRoom(roomId, p1, p2);
+  const players = new Map<number, Socket | null>();
+  players.set(0, p1);
+  players.set(1, p2);
+  const room = new GameRoom(roomId, players);
   rooms.set(roomId, room);
   room.onDestroy = () => rooms.delete(roomId);
   room.start();

@@ -113,6 +113,10 @@ export class BattleSimulator {
   static readonly SPAWN_RESPAWN_BASE = 20;   // 첫 파괴: 20초
   static readonly SPAWN_RESPAWN_INC  = 5;    // 이후 매 파괴마다 +5초
 
+  // N인 지원 필드
+  private playerIds: number[] = [0, 1];
+  private playerZoneBounds: Map<number, { xMin: number; xMax: number }> = new Map();
+
   // 이벤트
   onSpawnHpChanged?: (event: SpawnEvent) => void;
   onSpawnDestroyed?: (spawnId: number, respawnDuration: number) => void;
@@ -145,19 +149,21 @@ export class BattleSimulator {
   onSpawnHealed?: (event: { spawnId: number; hp: number; maxHp: number; ownerId: number }) => void;
   onCoreHealed?: (event: { coreId: number; hp: number; maxHp: number; ownerId: number }) => void;
 
-  private monsters: MonsterModel[][] = [[], []];
-  private monsterGeneration: number[] = [0, 0];
+  private monsters: Map<number, MonsterModel[]> = new Map();
+  private monsterGeneration: Map<number, number> = new Map();
   private static readonly MAX_MONSTERS_PER_ZONE = 3;
   private nextMonsterId: number = 1;
   private droppedItems: Map<string, DroppedItemModel> = new Map();
   private nextItemId: number = 1;
-  private playerBasePower: number[] = [1, 1];
-  private playerBallCountBonus: number[] = [0, 0];    // White 몬스터 드랍: 페이즈당 추가 공 수
-  private playerSpeedMultiplier: number[] = [1.0, 1.0]; // LightBlue 몬스터 드랍: 공 이동 속도 배율
-  private playerReflectorBonus: number[] = [0, 0];    // Purple 몬스터 드랍: 보드 반사판 최대 갯수 보너스
+  private playerBasePower: Map<number, number> = new Map();
+  private playerBallCountBonus: Map<number, number> = new Map();    // White 몬스터 드랍: 페이즈당 추가 공 수
+  private playerSpeedMultiplier: Map<number, number> = new Map();   // LightBlue 몬스터 드랍: 공 이동 속도 배율
+  private playerReflectorBonus: Map<number, number> = new Map();    // Purple 몬스터 드랍: 보드 반사판 최대 갯수 보너스
 
   getMonsters(): MonsterModel[] {
-    return [...this.monsters[0], ...this.monsters[1]];
+    const all: MonsterModel[] = [];
+    for (const list of this.monsters.values()) all.push(...list);
+    return all;
   }
 
   // 타워별 순차 발사 큐 (spawnId → 발사 대기 목록)
@@ -169,13 +175,11 @@ export class BattleSimulator {
     this.config = { ...DEFAULT_BATTLE_CONFIG, ...config };
     this.simulator = new BallSimulator(map);
 
-    // 반사판 큐 초기화 (2명)
-    this.reflectorQueues.set(0, []);
-    this.reflectorQueues.set(1, []);
-
-    // 아이템 초기화 (2명)
-    this.itemCounts.set(0, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
-    this.itemCounts.set(1, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
+    // 반사판 큐, 아이템 초기화
+    for (const pid of this.playerIds) {
+      this.reflectorQueues.set(pid, []);
+      this.itemCounts.set(pid, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
+    }
   }
 
   getItemCounts(playerId: number): ItemCounts {
@@ -211,66 +215,27 @@ export class BattleSimulator {
     }
     this.isRunning = true;
 
-    // 스타트 타일에서 SpawnPoint 생성
-    // uniqueIndex 2,4 = P1(ownerId=0), 3,5 = P2(ownerId=1)
-    const startTiles = this.map.getStartTiles();
-    for (const tile of startTiles) {
-      const idx = tile.tileData.uniqueIndex;
-      const ownerId = (idx === 2 || idx === 4) ? 0 : 1;
-      const dir = tile.startDirection;
-      const sp = new SpawnPointModel(this.nextSpawnPointId++, tile, ownerId, dir, this.config.spawnHp);
-      this.spawnPoints.push(sp);
+    // 몬스터 & 아이템 초기화 (N인 지원 Map)
+    this.monsters.clear();
+    this.monsterGeneration.clear();
+    this.playerBasePower.clear();
+    this.playerBallCountBonus.clear();
+    this.playerSpeedMultiplier.clear();
+    this.playerReflectorBonus.clear();
+    for (const pid of this.playerIds) {
+      this.monsters.set(pid, []);
+      this.monsterGeneration.set(pid, 0);
+      this.playerBasePower.set(pid, 1);
+      this.playerBallCountBonus.set(pid, 0);
+      this.playerSpeedMultiplier.set(pid, 1.0);
+      this.playerReflectorBonus.set(pid, 0);
     }
-
-    // 코어 타일에서 CoreModel 생성
-    // uniqueIndex 6 = P1(ownerId=0), 8 = P2(ownerId=1)
-    const coreTiles = this.map.getCoreTiles();
-    for (const tile of coreTiles) {
-      const ownerId = tile.tileData.uniqueIndex === 6 ? 0 : 1;
-      const core = new CoreModel(this.nextCoreId++, tile, ownerId, this.config.coreHp);
-      this.cores.push(core);
-    }
-
-    // 몬스터 초기화
-    this.monsters = [[], []];
-    this.monsterGeneration = [0, 0];
     this.nextMonsterId = 1;
     this.droppedItems.clear();
     this.nextItemId = 1;
-    this.playerBasePower = [1, 1];
-    this.playerBallCountBonus = [0, 0];
-    this.playerSpeedMultiplier = [1.0, 1.0];
-    this.playerReflectorBonus = [0, 0];
 
-    // 중앙 라인(x=6) 초기 벽 배치
-    const centerWalls: { y: number; hp: number }[] = [
-      { y: 0, hp: 10_000_000 },
-      { y: 1, hp:  1_000_000 },
-      { y: 2, hp:    100_000 },
-      { y: 3, hp:     10_000 },
-      { y: 4, hp:        100 },
-      { y: 5, hp:      1_000 },
-      { y: 6, hp:     10_000 },
-      { y: 7, hp:    100_000 },
-      { y: 8, hp:  1_000_000 },
-    ];
-    for (const { y, hp } of centerWalls) {
-      const wall: WallState = { x: 6, y, hp, maxHp: hp, ownerId: -1 };
-      this.walls.set(`6,${y}`, wall);
-    }
-
-    // 각 플레이어 진영에 MAX_MONSTERS_PER_ZONE마리 몬스터를 확률로 생성
-    for (let pid = 0; pid < 2; pid++) {
-      for (let i = 0; i < BattleSimulator.MAX_MONSTERS_PER_ZONE; i++) {
-        const tile = this.pickRandomEmptyTile(pid);
-        if (tile) {
-          const monsterType = this.pickRandomMonsterType();
-          const m = new MonsterModel(this.nextMonsterId++, monsterType, tile.x, tile.y, Math.ceil(Math.pow(1.1, this.monsterGeneration[pid])));
-          this.monsters[pid].push(m);
-          this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
-        }
-      }
-    }
+    // TODO 세션 2: mapData.spawnAssignments가 있으면 initFromAssignments() 호출
+    this.initLegacy();
 
     // BallSimulator 이벤트 연결
     this.simulator.onBallCreated = (ball, dir) => this.onBallCreated?.(ball, dir);
@@ -286,48 +251,54 @@ export class BattleSimulator {
         item.pickedUp = true;
         this.droppedItems.delete(itemKey);
         if (item.itemType === DropItemType.PowerUp) {
-          this.playerBasePower[ball.ownerId]++;
+          const newPower = (this.playerBasePower.get(ball.ownerId) ?? 1) + 1;
+          this.playerBasePower.set(ball.ownerId, newPower);
           for (const inst of this.simulator.instances) {
             if (inst.ball.ownerId === ball.ownerId) {
-              inst.ball.power = this.playerBasePower[ball.ownerId];
+              inst.ball.power = newPower;
             }
           }
-          ball.power = this.playerBasePower[ball.ownerId];
+          ball.power = newPower;
           this.onBallPoweredUp?.(ball.id, ball.ownerId);
         } else if (item.itemType === DropItemType.BallCount) {
-          this.playerBallCountBonus[ball.ownerId]++;
-          this.onPlayerBallCountUp?.(ball.ownerId, this.playerBallCountBonus[ball.ownerId]);
+          const newCount = (this.playerBallCountBonus.get(ball.ownerId) ?? 0) + 1;
+          this.playerBallCountBonus.set(ball.ownerId, newCount);
+          this.onPlayerBallCountUp?.(ball.ownerId, newCount);
         } else if (item.itemType === DropItemType.SpeedUp) {
-          this.playerSpeedMultiplier[ball.ownerId] += 0.05;
-          this.onPlayerSpeedUp?.(ball.ownerId, this.playerSpeedMultiplier[ball.ownerId]);
+          const newSpeed = (this.playerSpeedMultiplier.get(ball.ownerId) ?? 1.0) + 0.05;
+          this.playerSpeedMultiplier.set(ball.ownerId, newSpeed);
+          this.onPlayerSpeedUp?.(ball.ownerId, newSpeed);
         } else if (item.itemType === DropItemType.ReflectorExpand) {
-          this.playerReflectorBonus[ball.ownerId]++;
-          this.onPlayerReflectorExpand?.(ball.ownerId, this.playerReflectorBonus[ball.ownerId]);
+          const newBonus = (this.playerReflectorBonus.get(ball.ownerId) ?? 0) + 1;
+          this.playerReflectorBonus.set(ball.ownerId, newBonus);
+          this.onPlayerReflectorExpand?.(ball.ownerId, newBonus);
         }
         this.onItemPickedUp?.(item.id, ball.id, ball.ownerId);
       }
 
       // 2. 몬스터 체크
-      for (let pid = 0; pid < 2; pid++) {
-        const idx = this.monsters[pid].findIndex(m => m.active && m.x === tile.x && m.y === tile.y);
+      for (const pid of this.playerIds) {
+        const monsterList = this.monsters.get(pid) ?? [];
+        const idx = monsterList.findIndex(m => m.active && m.x === tile.x && m.y === tile.y);
         if (idx === -1) continue;
-        const monster = this.monsters[pid][idx];
+        const monster = monsterList[idx];
         const monsterHpBefore = monster.hp;
         monster.damage(ball.power);
         if (!monster.active) {
           this.onMonsterKilled?.(monster.id, monster.x, monster.y);
           this.spawnItemAt(monster.x, monster.y, monster.type);
           // 즉시 리젠 (확률로 새 타입 결정)
-          this.monsterGeneration[pid]++;
-          const newHp = Math.ceil(Math.pow(1.1, this.monsterGeneration[pid]));
+          const gen = (this.monsterGeneration.get(pid) ?? 0) + 1;
+          this.monsterGeneration.set(pid, gen);
+          const newHp = Math.ceil(Math.pow(1.1, gen));
           const spawnTile = this.pickRandomEmptyTile(pid);
           if (spawnTile) {
             const newType = this.pickRandomMonsterType();
             const m = new MonsterModel(this.nextMonsterId++, newType, spawnTile.x, spawnTile.y, newHp);
-            this.monsters[pid][idx] = m;
+            monsterList[idx] = m;
             this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
           } else {
-            this.monsters[pid].splice(idx, 1); // 빈 자리 정리
+            monsterList.splice(idx, 1); // 빈 자리 정리
           }
           // 관통: 남은 공격력으로 계속 진행
           ball.power -= monsterHpBefore;
@@ -403,6 +374,65 @@ export class BattleSimulator {
 
     // 첫 틱에서 바로 발사되도록 타이머를 가득 채움 (MATCH_FOUND 이후 발사 보장)
     this.spawnTimer = this.config.spawnInterval;
+  }
+
+  /** 레거시 1v1 초기화 — uniqueIndex 기반 스폰/코어 배치 */
+  private initLegacy(): void {
+    // 존 경계 설정 (레거시 1v1: P1은 x<=5, P2는 x>=7)
+    this.playerZoneBounds.set(0, { xMin: 0, xMax: 5 });
+    this.playerZoneBounds.set(1, { xMin: 7, xMax: this.map.width - 1 });
+
+    // 스타트 타일에서 SpawnPoint 생성
+    // uniqueIndex 2,4 = P1(ownerId=0), 3,5 = P2(ownerId=1)
+    const startTiles = this.map.getStartTiles();
+    for (const tile of startTiles) {
+      const idx = tile.tileData.uniqueIndex;
+      const ownerId = (idx === 2 || idx === 4) ? 0 : 1;
+      const dir = tile.startDirection;
+      const sp = new SpawnPointModel(this.nextSpawnPointId++, tile, ownerId, dir, this.config.spawnHp);
+      this.spawnPoints.push(sp);
+    }
+
+    // 코어 타일에서 CoreModel 생성
+    // uniqueIndex 6 = P1(ownerId=0), 8 = P2(ownerId=1)
+    const coreTiles = this.map.getCoreTiles();
+    for (const tile of coreTiles) {
+      const ownerId = tile.tileData.uniqueIndex === 6 ? 0 : 1;
+      const core = new CoreModel(this.nextCoreId++, tile, ownerId, this.config.coreHp);
+      this.cores.push(core);
+    }
+
+    // 중앙 라인(x=6) 초기 벽 배치
+    const centerWalls: { y: number; hp: number }[] = [
+      { y: 0, hp: 10_000_000 },
+      { y: 1, hp:  1_000_000 },
+      { y: 2, hp:    100_000 },
+      { y: 3, hp:     10_000 },
+      { y: 4, hp:        100 },
+      { y: 5, hp:      1_000 },
+      { y: 6, hp:     10_000 },
+      { y: 7, hp:    100_000 },
+      { y: 8, hp:  1_000_000 },
+    ];
+    for (const { y, hp } of centerWalls) {
+      const wall: WallState = { x: 6, y, hp, maxHp: hp, ownerId: -1 };
+      this.walls.set(`6,${y}`, wall);
+    }
+
+    // 각 플레이어 진영에 MAX_MONSTERS_PER_ZONE마리 몬스터를 확률로 생성
+    for (const pid of this.playerIds) {
+      const monsterList = this.monsters.get(pid)!;
+      for (let i = 0; i < BattleSimulator.MAX_MONSTERS_PER_ZONE; i++) {
+        const tile = this.pickRandomEmptyTile(pid);
+        if (tile) {
+          const monsterType = this.pickRandomMonsterType();
+          const gen = this.monsterGeneration.get(pid) ?? 0;
+          const m = new MonsterModel(this.nextMonsterId++, monsterType, tile.x, tile.y, Math.ceil(Math.pow(1.1, gen)));
+          monsterList.push(m);
+          this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
+        }
+      }
+    }
   }
 
   /** delta(초) 만큼 시뮬레이션 진행 */
@@ -489,8 +519,10 @@ export class BattleSimulator {
     // 플레이어별 모든 몬스터 이동
     const CARDINAL = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     const allMonsters = this.getMonsters();
-    for (let pid = 0; pid < 2; pid++) {
-      for (const monster of this.monsters[pid]) {
+    for (const pid of this.playerIds) {
+      const monsterList = this.monsters.get(pid) ?? [];
+      const bounds = this.playerZoneBounds.get(pid);
+      for (const monster of monsterList) {
         if (!monster.active) continue;
         const validMoves: { x: number; y: number }[] = [];
         for (const [dx, dy] of CARDINAL) {
@@ -498,8 +530,8 @@ export class BattleSimulator {
           const ny = monster.y + dy;
           const tile = this.map.getTile(nx, ny);
           if (!tile || !tile.isReflectorSetable) continue;
-          if (pid === 0 && nx >= 6) continue; // P1은 x<6 유지
-          if (pid === 1 && nx <= 6) continue; // P2는 x>6 유지
+          // 존 경계 체크 (레거시: 중앙 x=6 기준, N인: playerZoneBounds)
+          if (bounds && (nx < bounds.xMin || nx > bounds.xMax)) continue;
           if (this.spawnPoints.some(s => s.tile.x === nx && s.tile.y === ny)) continue;
           if (this.cores.some(c => c.tile.x === nx && c.tile.y === ny)) continue;
           if (this.walls.has(`${nx},${ny}`)) continue;
@@ -523,7 +555,7 @@ export class BattleSimulator {
     for (const sp of this.spawnPoints) {
       if (!sp.active) continue;
       const queue = this.spawnQueues.get(sp.id) ?? [];
-      const ballCount = baseBallCount + this.playerBallCountBonus[sp.ownerId];
+      const ballCount = baseBallCount + (this.playerBallCountBonus.get(sp.ownerId) ?? 0);
       for (let i = 0; i < ballCount; i++) {
         queue.push({ tile: sp.tile, direction: sp.spawnDirection, ownerId: sp.ownerId });
       }
@@ -546,8 +578,8 @@ export class BattleSimulator {
       const entry = queue.shift()!;
       const inst = this.simulator.spawnBall(entry.tile, entry.direction, entry.ownerId);
       if (inst) {
-        inst.ball.power = this.playerBasePower[entry.ownerId];
-        inst.ball.speedMultiplier = this.playerSpeedMultiplier[entry.ownerId];
+        inst.ball.power = this.playerBasePower.get(entry.ownerId) ?? 1;
+        inst.ball.speedMultiplier = this.playerSpeedMultiplier.get(entry.ownerId) ?? 1.0;
       }
     }
   }
@@ -570,9 +602,10 @@ export class BattleSimulator {
       if (m.active) occupied.add(`${m.x},${m.y}`);
     }
 
-    // P1(0): x=0~5, P2(1): x=7~(width-1)
-    const xMin = playerId === 0 ? 0 : 7;
-    const xMax = playerId === 0 ? 5 : width - 1;
+    // 존 경계 기반 범위 (레거시: P1=0~5, P2=7~width-1)
+    const bounds = this.playerZoneBounds.get(playerId);
+    const xMin = bounds?.xMin ?? 0;
+    const xMax = bounds?.xMax ?? (width - 1);
 
     const candidates: { x: number; y: number }[] = [];
     for (let y = 0; y < height; y++) {
@@ -607,7 +640,7 @@ export class BattleSimulator {
   /** 현재 유효 반사판 최대 슬롯 (파괴된 아군 스폰 수만큼 감소, 아이템 보너스 포함) */
   getEffectiveMaxReflectors(playerId: number): number {
     const destroyed = this.spawnPoints.filter(sp => sp.ownerId === playerId && !sp.active).length;
-    return Math.max(0, this.config.maxReflectorsPerPlayer + this.playerReflectorBonus[playerId] - destroyed);
+    return Math.max(0, this.config.maxReflectorsPerPlayer + (this.playerReflectorBonus.get(playerId) ?? 0) - destroyed);
   }
 
   /** 타워 파괴 시 초과 반사판(마지막 배치순) 제거 */
@@ -756,5 +789,20 @@ export class BattleSimulator {
 
   getSpawnPoint(id: number): SpawnPointModel | undefined {
     return this.spawnPoints.find(s => s.id === id);
+  }
+
+  /** 반사판 설치 가능 여부 확인 (AI용) */
+  canPlaceReflector(playerId: number, x: number, y: number): boolean {
+    if (this.isEnemySpawnZone(playerId, x, y)) return false;
+    if (this.walls.has(`${x},${y}`)) return false;
+    if (this.getMonsters().some(m => m.active && m.x === x && m.y === y)) return false;
+    const tile = this.map.getTile(x, y);
+    if (!tile || !tile.isReflectorSetable) return false;
+    return true;
+  }
+
+  /** 현재 반사판 스톡 반환 */
+  getReflectorStock(playerId: number): number {
+    return this.reflectorStocks.get(playerId) ?? 0;
   }
 }

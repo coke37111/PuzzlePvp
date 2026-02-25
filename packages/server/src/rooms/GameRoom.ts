@@ -46,18 +46,19 @@ import {
 } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
+
 export class GameRoom {
   readonly id: string;
-  private players: [Socket, Socket];
+  private players: Map<number, Socket | null>;  // playerId → Socket (null = AI)
   private simulator: BattleSimulator;
   private map: MapModel;
   private tickTimer: NodeJS.Timeout | null = null;
   private lastTickTime: number = Date.now();
   onDestroy?: () => void;
 
-  constructor(id: string, p1: Socket, p2: Socket) {
+  constructor(id: string, players: Map<number, Socket | null>) {
     this.id = id;
-    this.players = [p1, p2];
+    this.players = players;
 
     // 맵 및 시뮬레이터 초기화
     const registry = createBattleTileRegistry();
@@ -282,10 +283,12 @@ export class GameRoom {
       hp: w.hp,
       maxHp: w.maxHp,
     }));
-    for (let i = 0; i < 2; i++) {
+
+    for (const [playerId, socket] of this.players) {
+      if (!socket) continue; // AI 슬롯은 스킵
       const msg: MatchFoundMsg = {
         roomId: this.id,
-        playerId: i,
+        playerId,
         mapData,
         spawnPoints,
         cores,
@@ -297,17 +300,16 @@ export class GameRoom {
         monsters,
         walls,
       };
-      this.players[i].emit(SocketEvent.MATCH_FOUND, msg);
+      socket.emit(SocketEvent.MATCH_FOUND, msg);
     }
 
-    // 서버 틱 시작 (disconnect 핸들러 등록 전에 설정)
+    // 서버 틱 시작
     this.lastTickTime = Date.now();
     this.tickTimer = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
-    // 입력 이벤트 등록
-    for (let i = 0; i < 2; i++) {
-      const socket = this.players[i];
-      const playerId = i;
+    // 입력 이벤트 등록 (실제 소켓만)
+    for (const [playerId, socket] of this.players) {
+      if (!socket) continue; // AI 슬롯은 스킵
 
       socket.on(SocketEvent.PLACE_REFLECTOR, (msg: PlaceReflectorMsg) => {
         console.log(`[GameRoom ${this.id}] P${playerId} 반사판 설치: (${msg.x},${msg.y}) type=${msg.type}`);
@@ -335,18 +337,18 @@ export class GameRoom {
       socket.on('disconnect', () => {
         if (!this.tickTimer) return;  // 이미 종료된 게임 무시
         console.log(`[GameRoom ${this.id}] 플레이어 ${playerId} 연결 끊김`);
-        // 상대에게 승리 알림
-        const opponentIdx = playerId === 0 ? 1 : 0;
-        const opponentSocket = this.players[opponentIdx];
-        if (opponentSocket.connected) {
-          const msg: GameOverMsg = { winnerId: opponentIdx };
+        // 상대 플레이어에게 승리 알림 (1v1 레거시: winnerId = 상대 playerId)
+        const opponentId = playerId === 0 ? 1 : 0;
+        const opponentSocket = this.players.get(opponentId);
+        if (opponentSocket?.connected) {
+          const msg: GameOverMsg = { winnerId: opponentId };
           opponentSocket.emit(SocketEvent.GAME_OVER, msg);
         }
         this.stop();
       });
     }
 
-    console.log(`[GameRoom ${this.id}] 게임 시작`);
+    console.log(`[GameRoom ${this.id}] 게임 시작 (플레이어 ${this.players.size}명)`);
   }
 
   private tick(): void {
@@ -363,7 +365,8 @@ export class GameRoom {
     }
 
     // 소켓 이벤트 리스너 정리
-    for (const socket of this.players) {
+    for (const socket of this.players.values()) {
+      if (!socket) continue;
       socket.removeAllListeners(SocketEvent.PLACE_REFLECTOR);
       socket.removeAllListeners(SocketEvent.REMOVE_REFLECTOR);
       socket.removeAllListeners(SocketEvent.PLACE_WALL);
@@ -376,8 +379,8 @@ export class GameRoom {
   }
 
   private broadcast(event: string, data: unknown): void {
-    for (const player of this.players) {
-      player.emit(event, data);
+    for (const socket of this.players.values()) {
+      if (socket) socket.emit(event, data);  // AI(null)는 스킵
     }
   }
 }
