@@ -47,10 +47,46 @@ export class MatchmakingScene extends Phaser.Scene {
       color: '#8888cc',
     }).setOrigin(0.5);
 
+    // 인원 선택 버튼 (테스트용)
+    const sizeOptions: { count: number; label: string }[] = [
+      { count: 2,  label: '2\n(2×1)' },
+      { count: 4,  label: '4\n(2×2)' },
+      { count: 6,  label: '6\n(2×3)' },
+      { count: 12, label: '12\n(3×4)' },
+      { count: 16, label: '16\n(4×4)' },
+    ];
+    const btnW = 100, btnH = 52, gap = 10;
+    const totalW = sizeOptions.length * btnW + (sizeOptions.length - 1) * gap;
+    const startX = (width - totalW) / 2 + btnW / 2;
+    const btnY = height * 0.65;
+
+    this.add.text(width / 2, btnY - 38, '[ 인원 선택 ]', {
+      fontSize: '14px',
+      color: '#888899',
+    }).setOrigin(0.5);
+
+    sizeOptions.forEach(({ count, label }, i) => {
+      const x = startX + i * (btnW + gap);
+      const btn = this.add.rectangle(x, btnY, btnW, btnH, 0x2a2a4a)
+        .setStrokeStyle(1, 0x5555aa)
+        .setInteractive({ useHandCursor: true });
+      const txt = this.add.text(x, btnY, label, {
+        fontSize: '14px',
+        color: '#aaaadd',
+        align: 'center',
+      }).setOrigin(0.5);
+
+      btn.on('pointerover', () => { btn.setFillStyle(0x3a3a6a); txt.setColor('#ffffff'); });
+      btn.on('pointerout',  () => { btn.setFillStyle(0x2a2a4a); txt.setColor('#aaaadd'); });
+      btn.on('pointerdown', () => {
+        this.socket?.setTargetPlayers(count);
+      });
+    });
+
     // 취소 버튼
-    const cancelBtn = this.add.rectangle(width / 2, height * 0.72, 160, 50, 0x444444)
+    const cancelBtn = this.add.rectangle(width / 2, height * 0.82, 160, 50, 0x444444)
       .setInteractive({ useHandCursor: true });
-    this.add.text(width / 2, height * 0.72, '취소', {
+    this.add.text(width / 2, height * 0.82, '취소', {
       fontSize: '20px',
       color: '#ffffff',
     }).setOrigin(0.5);

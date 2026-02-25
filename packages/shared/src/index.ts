@@ -49,6 +49,7 @@ export type {
   SpawnHealedMsg, CoreHealedMsg,
   LobbyUpdateMsg, PlayerEliminatedMsg,
   TowerBoxInfo, TowerBoxDamagedMsg, TowerBoxBrokenMsg,
+  SetTargetPlayersMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

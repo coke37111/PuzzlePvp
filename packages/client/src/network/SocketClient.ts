@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import {
   SocketEvent,
+  SetTargetPlayersMsg,
   MatchFoundMsg,
   SpawnHpMsg,
   SpawnDestroyedMsg,
@@ -184,5 +185,10 @@ export class SocketClient {
 
   useTimeStop(): void {
     this.socket.emit(SocketEvent.USE_TIME_STOP);
+  }
+
+  setTargetPlayers(count: number): void {
+    const msg: SetTargetPlayersMsg = { targetCount: count };
+    this.socket.emit(SocketEvent.SET_TARGET_PLAYERS, msg);
   }
 }

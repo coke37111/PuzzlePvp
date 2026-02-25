@@ -6,7 +6,7 @@ import path from 'path';
 import { MatchmakingQueue } from './matchmaking/MatchmakingQueue';
 import { LobbyManager } from './matchmaking/LobbyManager';
 import { GameRoom } from './rooms/GameRoom';
-import { SocketEvent } from '@puzzle-pvp/shared';
+import { SocketEvent, SetTargetPlayersMsg } from '@puzzle-pvp/shared';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 4000;
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -77,6 +77,11 @@ io.on('connection', (socket: Socket) => {
   socket.on(SocketEvent.LEAVE_QUEUE, () => {
     console.log(`[Server] 매칭 취소: ${socket.id}`);
     lobby.dequeue(socket);
+  });
+
+  socket.on(SocketEvent.SET_TARGET_PLAYERS, (msg: SetTargetPlayersMsg) => {
+    console.log(`[Server] 인원 강제 설정: ${socket.id} → ${msg.targetCount}명`);
+    lobby.forceLaunch(socket, msg.targetCount);
   });
 
   socket.on('disconnect', () => {

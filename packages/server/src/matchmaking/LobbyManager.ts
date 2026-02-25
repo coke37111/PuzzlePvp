@@ -72,6 +72,19 @@ export class LobbyManager {
     this.broadcastLobbyUpdate();
   }
 
+  forceLaunch(socket: Socket, targetCount: number): void {
+    if (!this.queue.includes(socket)) return;
+    const finalCount = Math.max(2, Math.min(this.MAX_PLAYERS, targetCount));
+    this.stopCountdown();
+    const sockets = this.queue.splice(0, finalCount);
+    console.log(`[Lobby] 강제 시작: 목표 ${finalCount}명 (실제 ${sockets.length}명 + AI ${finalCount - sockets.length}명)`);
+    this.onGameReady?.(sockets, finalCount);
+    if (this.queue.length >= this.MIN_PLAYERS) {
+      this.startCountdown();
+    }
+    this.broadcastLobbyUpdate();
+  }
+
   private broadcastLobbyUpdate(): void {
     const msg: LobbyUpdateMsg = {
       currentPlayers: this.queue.length,

@@ -11,6 +11,10 @@ export interface JoinQueueMsg {
   // 빈 payload
 }
 
+export interface SetTargetPlayersMsg {
+  targetCount: number;
+}
+
 export interface PlaceReflectorMsg {
   x: number;
   y: number;
@@ -309,6 +313,7 @@ export const SocketEvent = {
   PLACE_WALL: 'place_wall',
   USE_TIME_STOP: 'use_time_stop',
   LEAVE_QUEUE: 'leave_queue',
+  SET_TARGET_PLAYERS: 'set_target_players',
 
   // S → C
   MATCH_FOUND: 'match_found',
