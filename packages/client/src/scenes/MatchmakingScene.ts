@@ -7,6 +7,9 @@ export class MatchmakingScene extends Phaser.Scene {
   private dots: string = '';
   private dotsTimer: number = 0;
   private statusText!: Phaser.GameObjects.Text;
+  private countdownText!: Phaser.GameObjects.Text;
+  private playerCountText!: Phaser.GameObjects.Text;
+  private hasLobbyInfo: boolean = false;
 
   constructor() {
     super({ key: 'MatchmakingScene' });
@@ -14,38 +17,65 @@ export class MatchmakingScene extends Phaser.Scene {
 
   create(): void {
     const { width, height } = this.scale;
+    this.hasLobbyInfo = false;
     this.add.rectangle(0, 0, width, height, 0x1a1a2e).setOrigin(0, 0);
 
-    this.add.text(width / 2, height * 0.35, '매칭 중', {
+    this.add.text(width / 2, height * 0.25, '매칭 중', {
       fontSize: '36px',
       color: '#e0e0ff',
       fontStyle: 'bold',
     }).setOrigin(0.5);
 
+    // 카운트다운 숫자 (큰 글씨)
+    this.countdownText = this.add.text(width / 2, height * 0.42, '', {
+      fontSize: '64px',
+      color: '#ffdd44',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(0.5);
+
+    // 플레이어 수 표시
+    this.playerCountText = this.add.text(width / 2, height * 0.57, '', {
+      fontSize: '20px',
+      color: '#aaaacc',
+    }).setOrigin(0.5);
+
+    // 기본 상태 텍스트 (로비 정보 없을 때 표시)
     this.statusText = this.add.text(width / 2, height * 0.5, '상대를 찾는 중...', {
       fontSize: '20px',
       color: '#8888cc',
     }).setOrigin(0.5);
 
     // 취소 버튼
-    const cancelBtn = this.add.rectangle(width / 2, height * 0.65, 160, 50, 0x444444)
+    const cancelBtn = this.add.rectangle(width / 2, height * 0.72, 160, 50, 0x444444)
       .setInteractive({ useHandCursor: true });
-    this.add.text(width / 2, height * 0.65, '취소', {
+    this.add.text(width / 2, height * 0.72, '취소', {
       fontSize: '20px',
       color: '#ffffff',
     }).setOrigin(0.5);
 
     cancelBtn.on('pointerdown', () => {
+      this.socket?.leaveQueue();
       this.socket?.disconnect();
       this.scene.start('MainMenuScene');
     });
 
     // 소켓 연결 및 매칭 요청
     this.socket = SocketClient.instance;
+
+    this.socket.onLobbyUpdate = (msg) => {
+      this.hasLobbyInfo = true;
+      this.statusText.setVisible(false);
+      this.playerCountText.setText(`${msg.currentPlayers}/${msg.maxPlayers}명 대기 중`);
+      this.countdownText.setText(msg.countdown >= 0 ? `${msg.countdown}` : '');
+    };
+
     this.socket.onConnected = () => {
       this.socket.joinQueue();
     };
     this.socket.onMatchFound = (msg: MatchFoundMsg) => {
+      this.socket.onLobbyUpdate = undefined;
       this.scene.start('GameScene', { matchData: msg, socket: this.socket });
     };
     if (this.socket.isConnected) {
@@ -55,12 +85,21 @@ export class MatchmakingScene extends Phaser.Scene {
     }
   }
 
-  update(time: number, delta: number): void {
+  update(_time: number, delta: number): void {
+    if (this.hasLobbyInfo) return;
     this.dotsTimer += delta;
     if (this.dotsTimer > 500) {
       this.dotsTimer = 0;
       this.dots = this.dots.length >= 3 ? '' : this.dots + '.';
       this.statusText.setText(`상대를 찾는 중${this.dots}`);
+    }
+  }
+
+  shutdown(): void {
+    if (this.socket) {
+      this.socket.onLobbyUpdate = undefined;
+      this.socket.onConnected = undefined;
+      this.socket.onMatchFound = undefined;
     }
   }
 }

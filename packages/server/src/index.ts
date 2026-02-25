@@ -71,18 +71,16 @@ io.on('connection', (socket: Socket) => {
 
   socket.on(SocketEvent.JOIN_QUEUE, () => {
     console.log(`[Server] 매칭 요청: ${socket.id}`);
-    matchmaking.enqueue(socket);
+    lobby.enqueue(socket);
   });
 
   socket.on(SocketEvent.LEAVE_QUEUE, () => {
     console.log(`[Server] 매칭 취소: ${socket.id}`);
-    matchmaking.dequeue(socket);
     lobby.dequeue(socket);
   });
 
   socket.on('disconnect', () => {
     console.log(`[Server] 연결 종료: ${socket.id}`);
-    matchmaking.dequeue(socket);
     lobby.dequeue(socket);
   });
 });
