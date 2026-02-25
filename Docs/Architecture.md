@@ -170,7 +170,7 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 | 파일 | 역할 |
 |------|------|
 | `Constants.ts` | 타일 크기, 색상, HP 그라디언트, 몬스터 타입별 색상 |
-| `VisualEffects.ts` | HP 그라디언트 계산, 데미지/힐 팝업 애니메이션, 공 종료 파티클 |
+| `VisualEffects.ts` | HP 그라디언트 계산, 데미지/힐 팝업 애니메이션, 공 종료 파티클 (반칸 전진 후 폭발) |
 | `SoundManager.ts` | Web Audio API 기반 효과음 (on/off 상태 localStorage 저장) |
 
 ### GameScene UI 요소
@@ -222,6 +222,11 @@ HTTP 요청 흐름:
 ---
 
 ## 핵심 알고리즘
+
+### 공 종료 애니메이션 (히트감)
+
+`onBallEnded` 수신 시 즉시 폭발하지 않고, `BallVisual.lastDx/lastDy`에 저장된 마지막 이동 방향으로 반칸(`TILE_SIZE × 0.5`) 전진한 뒤 파티클 폭발.
+전진 시간 = `timePerPhase × 250ms`.
 
 ### Phase 기반 공 이동 (공별 독립 속도)
 
