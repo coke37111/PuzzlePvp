@@ -24,6 +24,11 @@ export { BallSimulator } from './core/BallSimulator';
 export { SpawnPointModel, CoreModel } from './core/SpawnPointModel';
 export { BattleSimulator, DEFAULT_BATTLE_CONFIG } from './core/BattleSimulator';
 export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
+export { generateNPlayerBattleMap, LAYOUT_TABLE, TOWER_BOX_HP, ZONE_WALL_HP } from './core/MapLayout';
+export type {
+  TeamConfig, PlayerZone, MapLayoutConfig,
+  SpawnAssignment, CoreAssignment, ZoneWallSegment, GeneratedMap,
+} from './core/MapLayout';
 
 // Types
 export type {

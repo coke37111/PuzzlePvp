@@ -3,6 +3,7 @@ import { TileData, createTileData, EMPTY_TILE_INDEX } from './TileData';
 import { ReflectorType } from '../enums/ReflectorType';
 import { TileType } from '../enums/TileType';
 import { Direction } from '../enums/Direction';
+import type { SpawnAssignment, CoreAssignment, ZoneWallSegment, MapLayoutConfig } from './MapLayout';
 
 export interface MapData {
   width: number;
@@ -11,10 +12,14 @@ export interface MapData {
   tiles: number[][];
   /** Portal 연결: portalGroupId → [tile1Index, tile2Index] */
   portalGroups?: Record<number, number[]>;
-  /** N인 스폰 배정 (세션 2에서 활성화, 없으면 레거시 1v1 경로) */
-  spawnAssignments?: unknown[];
-  /** N인 코어 배정 (세션 2에서 활성화) */
-  coreAssignments?: unknown[];
+  /** N인 스폰 배정 (없으면 레거시 1v1 경로) */
+  spawnAssignments?: SpawnAssignment[];
+  /** N인 코어 배정 */
+  coreAssignments?: CoreAssignment[];
+  /** N인 존 경계 벽 */
+  zoneWalls?: ZoneWallSegment[];
+  /** N인 레이아웃 설정 */
+  layout?: MapLayoutConfig;
 }
 
 export interface ReflectorPlacement {
@@ -31,6 +36,9 @@ export class MapModel {
   reflectors: Map<number, ReflectorPlacement> = new Map();  // key = index
   linkedPortals: Map<TileModel, TileModel> = new Map();
 
+  /** 원본 MapData (N인 경로에서 spawnAssignments 등 접근용) */
+  rawData?: MapData;
+
   // TileData 레지스트리 (uniqueIndex → TileData)
   private tileRegistry: Map<number, TileData>;
 
@@ -41,6 +49,7 @@ export class MapModel {
   }
 
   load(mapData: MapData): void {
+    this.rawData = mapData;
     this.width = mapData.width;
     this.height = mapData.height;
     this.tiles.clear();

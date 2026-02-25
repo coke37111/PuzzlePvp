@@ -8,6 +8,7 @@ import { DroppedItemModel, DropItemType } from './ItemModel';
 import { Direction } from '../enums/Direction';
 import { ReflectorType } from '../enums/ReflectorType';
 import { EndReason } from '../enums/EndReason';
+import type { SpawnAssignment, CoreAssignment, ZoneWallSegment, PlayerZone } from './MapLayout';
 
 export interface WallState {
   x: number;
@@ -115,7 +116,8 @@ export class BattleSimulator {
 
   // N인 지원 필드
   private playerIds: number[] = [0, 1];
-  private playerZoneBounds: Map<number, { xMin: number; xMax: number }> = new Map();
+  private playerZoneBounds: Map<number, { xMin: number; xMax: number; yMin: number; yMax: number }> = new Map();
+  private playerZones: Map<number, PlayerZone> = new Map();
 
   // 이벤트
   onSpawnHpChanged?: (event: SpawnEvent) => void;
@@ -234,8 +236,13 @@ export class BattleSimulator {
     this.droppedItems.clear();
     this.nextItemId = 1;
 
-    // TODO 세션 2: mapData.spawnAssignments가 있으면 initFromAssignments() 호출
-    this.initLegacy();
+    // N인 경로 vs 레거시 1v1 경로 분기
+    const raw = this.map.rawData;
+    if (raw?.spawnAssignments && raw?.coreAssignments) {
+      this.initFromAssignments(raw.spawnAssignments, raw.coreAssignments, raw.zoneWalls ?? []);
+    } else {
+      this.initLegacy();
+    }
 
     // BallSimulator 이벤트 연결
     this.simulator.onBallCreated = (ball, dir) => this.onBallCreated?.(ball, dir);
@@ -379,8 +386,8 @@ export class BattleSimulator {
   /** 레거시 1v1 초기화 — uniqueIndex 기반 스폰/코어 배치 */
   private initLegacy(): void {
     // 존 경계 설정 (레거시 1v1: P1은 x<=5, P2는 x>=7)
-    this.playerZoneBounds.set(0, { xMin: 0, xMax: 5 });
-    this.playerZoneBounds.set(1, { xMin: 7, xMax: this.map.width - 1 });
+    this.playerZoneBounds.set(0, { xMin: 0, xMax: 5, yMin: 0, yMax: this.map.height - 1 });
+    this.playerZoneBounds.set(1, { xMin: 7, xMax: this.map.width - 1, yMin: 0, yMax: this.map.height - 1 });
 
     // 스타트 타일에서 SpawnPoint 생성
     // uniqueIndex 2,4 = P1(ownerId=0), 3,5 = P2(ownerId=1)
@@ -420,6 +427,84 @@ export class BattleSimulator {
     }
 
     // 각 플레이어 진영에 MAX_MONSTERS_PER_ZONE마리 몬스터를 확률로 생성
+    for (const pid of this.playerIds) {
+      const monsterList = this.monsters.get(pid)!;
+      for (let i = 0; i < BattleSimulator.MAX_MONSTERS_PER_ZONE; i++) {
+        const tile = this.pickRandomEmptyTile(pid);
+        if (tile) {
+          const monsterType = this.pickRandomMonsterType();
+          const gen = this.monsterGeneration.get(pid) ?? 0;
+          const m = new MonsterModel(this.nextMonsterId++, monsterType, tile.x, tile.y, Math.ceil(Math.pow(1.1, gen)));
+          monsterList.push(m);
+          this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
+        }
+      }
+    }
+  }
+
+  /** N인 초기화 — spawnAssignments/coreAssignments 기반 */
+  private initFromAssignments(
+    spawns: SpawnAssignment[],
+    cores: CoreAssignment[],
+    zoneWalls: ZoneWallSegment[],
+  ): void {
+    const raw = this.map.rawData;
+    const layout = raw?.layout;
+
+    // 플레이어 IDs 및 존 경계 설정
+    if (layout) {
+      this.playerIds = layout.zones.map(z => z.playerId);
+      for (const zone of layout.zones) {
+        this.playerZones.set(zone.playerId, zone);
+        this.playerZoneBounds.set(zone.playerId, {
+          xMin: zone.originX,
+          xMax: zone.originX + zone.width - 1,
+          yMin: zone.originY,
+          yMax: zone.originY + zone.height - 1,
+        });
+      }
+      // 새 플레이어에 대한 아이템/반사판 큐 초기화
+      for (const pid of this.playerIds) {
+        if (!this.reflectorQueues.has(pid)) {
+          this.reflectorQueues.set(pid, []);
+        }
+        if (!this.itemCounts.has(pid)) {
+          this.itemCounts.set(pid, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
+        }
+        if (!this.reflectorStocks.has(pid)) {
+          this.reflectorStocks.set(pid, this.config.initialReflectorStock);
+          this.reflectorCooldownTimers.set(pid, 0);
+        }
+      }
+    }
+
+    // 코어 생성
+    for (const ca of cores) {
+      const tile = this.map.getTile(ca.x, ca.y);
+      if (!tile) continue;
+      const core = new CoreModel(this.nextCoreId++, tile, ca.ownerId, this.config.coreHp);
+      this.cores.push(core);
+    }
+
+    // 스폰 생성
+    for (const sa of spawns) {
+      const tile = this.map.getTile(sa.x, sa.y);
+      if (!tile) continue;
+      const sp = new SpawnPointModel(this.nextSpawnPointId++, tile, sa.ownerId, sa.direction, this.config.spawnHp);
+      if (sa.locked) {
+        sp.active = false; // 잠긴 타워는 비활성 (세션 4에서 박스 파괴 시 활성화)
+      }
+      this.spawnPoints.push(sp);
+      // TODO 세션 4: sa.boxTier > 0이면 TowerBoxModel 생성
+    }
+
+    // 존 경계 벽 배치 (WallState 시스템 활용)
+    for (const zw of zoneWalls) {
+      const wall: WallState = { x: zw.x, y: zw.y, hp: zw.hp, maxHp: zw.hp, ownerId: -1 };
+      this.walls.set(`${zw.x},${zw.y}`, wall);
+    }
+
+    // 각 플레이어 진영에 몬스터 생성
     for (const pid of this.playerIds) {
       const monsterList = this.monsters.get(pid)!;
       for (let i = 0; i < BattleSimulator.MAX_MONSTERS_PER_ZONE; i++) {
@@ -531,7 +616,7 @@ export class BattleSimulator {
           const tile = this.map.getTile(nx, ny);
           if (!tile || !tile.isReflectorSetable) continue;
           // 존 경계 체크 (레거시: 중앙 x=6 기준, N인: playerZoneBounds)
-          if (bounds && (nx < bounds.xMin || nx > bounds.xMax)) continue;
+          if (bounds && (nx < bounds.xMin || nx > bounds.xMax || ny < bounds.yMin || ny > bounds.yMax)) continue;
           if (this.spawnPoints.some(s => s.tile.x === nx && s.tile.y === ny)) continue;
           if (this.cores.some(c => c.tile.x === nx && c.tile.y === ny)) continue;
           if (this.walls.has(`${nx},${ny}`)) continue;
@@ -606,9 +691,11 @@ export class BattleSimulator {
     const bounds = this.playerZoneBounds.get(playerId);
     const xMin = bounds?.xMin ?? 0;
     const xMax = bounds?.xMax ?? (width - 1);
+    const yMin = bounds?.yMin ?? 0;
+    const yMax = bounds?.yMax ?? (height - 1);
 
     const candidates: { x: number; y: number }[] = [];
-    for (let y = 0; y < height; y++) {
+    for (let y = yMin; y <= yMax; y++) {
       for (let x = xMin; x <= xMax; x++) {
         const tile = this.map.getTile(x, y);
         if (!tile || !tile.isReflectorSetable) continue;
