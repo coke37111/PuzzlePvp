@@ -117,12 +117,13 @@ export class GameRoom {
       this.broadcast(SocketEvent.BALL_MOVED, msg);
     };
 
-    this.simulator.onBallEnded = (ball, tile, reason) => {
+    this.simulator.onBallEnded = (ball, tile, reason, direction) => {
       const msg: BallEndedMsg = {
         ballId: ball.id,
         x: tile.x,
         y: tile.y,
         reason,
+        direction,
       };
       this.broadcast(SocketEvent.BALL_ENDED, msg);
     };

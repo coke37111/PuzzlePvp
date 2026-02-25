@@ -219,6 +219,7 @@ export interface BallEndedMsg {
   x: number;
   y: number;
   reason: number;
+  direction: number;  // 공이 마지막으로 이동하던 방향 (Direction enum)
 }
 
 export interface GameOverMsg {

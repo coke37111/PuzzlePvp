@@ -15,7 +15,7 @@ export interface SimulationSummary {
 
 export type BallCreatedCallback = (ball: BallModel, direction: Direction) => void;
 export type BallMovedCallback = (ball: BallModel, from: TileModel, to: TileModel) => void;
-export type BallEndedCallback = (ball: BallModel, tile: TileModel, reason: EndReason) => void;
+export type BallEndedCallback = (ball: BallModel, tile: TileModel, reason: EndReason, direction: Direction) => void;
 export type BallGoalInCallback = (ball: BallModel, tile: TileModel) => void;
 export type SimulationEndCallback = (summary: SimulationSummary) => void;
 /** 공이 타일에 도착할 때마다 호출. true 반환 시 공을 캡처(종료)함 */
@@ -34,7 +34,7 @@ export class BallSimulator {
 
   private goalProgress: Map<number, { required: number; current: number }> = new Map();
   private initialGoalCount: number = 0;
-  private endReserved: Array<{ instance: BallSimulationInstance; tile: TileModel }> = [];
+  private endReserved: Array<{ instance: BallSimulationInstance; tile: TileModel; direction: Direction }> = [];
 
   instances: BallSimulationInstance[] = [];
 
@@ -118,7 +118,7 @@ export class BallSimulator {
     if (!this.checkPassable(nextTile, direction)) {
       instance.setEnd(EndReason.Blocked);
       instance.isMoving = false;
-      this.endReserved.push({ instance, tile });
+      this.endReserved.push({ instance, tile, direction: instance.direction });
     }
     return instance;
   }
@@ -195,8 +195,8 @@ export class BallSimulator {
 
     // 종료 예약 처리
     if (this.endReserved.length > 0) {
-      for (const { instance, tile } of this.endReserved) {
-        this.onBallEnded?.(instance.ball, tile, instance.endReason);
+      for (const { instance, tile, direction } of this.endReserved) {
+        this.onBallEnded?.(instance.ball, tile, instance.endReason, direction);
       }
       this.endReserved = [];
     }
@@ -214,7 +214,7 @@ export class BallSimulator {
     if (this.currentPhase > this.maxPhaseLimit) {
       for (const inst of this.instances.filter(i => !i.isEnd)) {
         inst.setEnd(EndReason.Loop);
-        this.onBallEnded?.(inst.ball, inst.currentTile, EndReason.Loop);
+        this.onBallEnded?.(inst.ball, inst.currentTile, EndReason.Loop, inst.direction);
       }
       this.onEnd?.({ isCleared: false, isLooped: true });
       return true;
@@ -242,7 +242,7 @@ export class BallSimulator {
     if (!this.checkPassable(nextTile, tile.startDirection)) {
       inst.setEnd(EndReason.Blocked);
       inst.isMoving = false;
-      this.endReserved.push({ instance: inst, tile });
+      this.endReserved.push({ instance: inst, tile, direction: inst.direction });
     }
   }
 
@@ -267,7 +267,7 @@ export class BallSimulator {
     const nextTile = this.findNearTile(inst.currentTile, inst.direction);
     if (!this.checkPassable(nextTile, inst.direction)) {
       inst.setEnd(EndReason.Blocked);
-      this.endReserved.push({ instance: inst, tile: inst.currentTile });
+      this.endReserved.push({ instance: inst, tile: inst.currentTile, direction: inst.direction });
       return;
     }
 
@@ -283,7 +283,7 @@ export class BallSimulator {
         inst.isMoving = false;
       } else {
         inst.setEnd(EndReason.PortalUnlinked);
-        this.endReserved.push({ instance: inst, tile: inst.currentTile });
+        this.endReserved.push({ instance: inst, tile: inst.currentTile, direction: inst.direction });
       }
     } else {
       // 반사판 처리
@@ -305,7 +305,7 @@ export class BallSimulator {
     // 타일 도착 콜백 — true 반환 시 공 캡처
     if (this.onBallArrivedAtTile?.(inst.ball, tile)) {
       inst.setEnd(EndReason.Goal);
-      this.endReserved.push({ instance: inst, tile });
+      this.endReserved.push({ instance: inst, tile, direction: inst.direction });
       return;
     }
 
@@ -324,7 +324,7 @@ export class BallSimulator {
       }
       inst.clearHistory();
       inst.setEnd(EndReason.Split);
-      this.endReserved.push({ instance: inst, tile });
+      this.endReserved.push({ instance: inst, tile, direction: inst.direction });
     } else if (tile.isGoal) {
       const prog = this.goalProgress.get(tile.index);
       if (prog) {
@@ -335,7 +335,7 @@ export class BallSimulator {
       }
       this.onGoalIn?.(inst.ball, tile);
       inst.setEnd(EndReason.Goal);
-      this.endReserved.push({ instance: inst, tile });
+      this.endReserved.push({ instance: inst, tile, direction: inst.direction });
     }
 
   }

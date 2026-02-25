@@ -7,7 +7,7 @@ export class LobbyManager {
   private countdownSeconds: number = -1;
 
   readonly MAX_PLAYERS = 16;
-  readonly MIN_PLAYERS = 2;
+  readonly MIN_PLAYERS = 1;
   readonly COUNTDOWN_DURATION = 10;
 
   /** 게임 시작 시 호출: sockets=실제 소켓, playerCount=AI 채움 후 총 인원 */

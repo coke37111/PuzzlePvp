@@ -130,7 +130,7 @@ export class BattleSimulator {
   onGameOver?: (result: BattleResult) => void;
   onBallCreated?: (ball: BallModel, direction: Direction) => void;
   onBallMoved?: (ball: BallModel, from: TileModel, to: TileModel) => void;
-  onBallEnded?: (ball: BallModel, tile: TileModel, reason: EndReason) => void;
+  onBallEnded?: (ball: BallModel, tile: TileModel, reason: EndReason, direction: Direction) => void;
   onWallPlaced?: (event: WallEvent & { playerId: number; maxHp: number }) => void;
   onWallDamaged?: (event: WallEvent) => void;
   onWallDestroyed?: (x: number, y: number) => void;
@@ -253,7 +253,7 @@ export class BattleSimulator {
     // BallSimulator 이벤트 연결
     this.simulator.onBallCreated = (ball, dir) => this.onBallCreated?.(ball, dir);
     this.simulator.onBallMoved = (ball, from, to) => this.onBallMoved?.(ball, from, to);
-    this.simulator.onBallEnded = (ball, tile, reason) => this.onBallEnded?.(ball, tile, reason);
+    this.simulator.onBallEnded = (ball, tile, reason, direction) => this.onBallEnded?.(ball, tile, reason, direction);
 
     // 공이 타일에 도착할 때 충돌 처리
     this.simulator.onBallArrivedAtTile = (ball, tile) => {

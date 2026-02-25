@@ -42,6 +42,7 @@ import {
   EMPTY_TILE_INDEX,
   MonsterType,
   DropItemType,
+  Direction,
 } from '@puzzle-pvp/shared';
 
 import {
@@ -1620,6 +1621,12 @@ export class GameScene extends Phaser.Scene {
         },
         visual.circle.scaleX,
       );
+
+      // 서버가 전달한 종료 방향으로 lastDx/lastDy 갱신 (반사판 통과 직후 벽에 막히는 경우 보정)
+      if (msg.direction === Direction.Right) { visual.lastDx = TILE_SIZE; visual.lastDy = 0; }
+      else if (msg.direction === Direction.Left) { visual.lastDx = -TILE_SIZE; visual.lastDy = 0; }
+      else if (msg.direction === Direction.Down) { visual.lastDx = 0; visual.lastDy = TILE_SIZE; }
+      else if (msg.direction === Direction.Up) { visual.lastDx = 0; visual.lastDy = -TILE_SIZE; }
 
       // 반칸 더 전진 후 폭발
       const halfDur = this.timePerPhase * 500 * 0.5;
