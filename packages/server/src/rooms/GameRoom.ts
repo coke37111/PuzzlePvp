@@ -5,6 +5,7 @@ import {
   MapModel,
   createBattleTileRegistry,
   createDefaultBattleMapData,
+  generateNPlayerBattleMap,
   SocketEvent,
   PlaceReflectorMsg,
   RemoveReflectorMsg,
@@ -43,7 +44,9 @@ import {
   PlayerReflectorExpandMsg,
   SpawnHealedMsg,
   CoreHealedMsg,
+  PlayerEliminatedMsg,
 } from '@puzzle-pvp/shared';
+import type { MapLayoutConfig } from '@puzzle-pvp/shared';
 
 const TICK_INTERVAL_MS = 50;  // 20 FPS 서버 틱
 
@@ -54,16 +57,34 @@ export class GameRoom {
   private map: MapModel;
   private tickTimer: NodeJS.Timeout | null = null;
   private lastTickTime: number = Date.now();
+  private layout?: MapLayoutConfig;
   onDestroy?: () => void;
 
-  constructor(id: string, players: Map<number, Socket | null>) {
+  constructor(id: string, players: Map<number, Socket | null>, playerCount?: number) {
     this.id = id;
     this.players = players;
 
     // 맵 및 시뮬레이터 초기화
     const registry = createBattleTileRegistry();
     this.map = new MapModel(registry);
-    this.map.load(createDefaultBattleMapData());
+    const count = playerCount ?? players.size;
+
+    if (count > 2) {
+      // N인 동적 맵 생성
+      const generated = generateNPlayerBattleMap(count);
+      this.layout = generated.layout;
+      const mapData = {
+        ...generated.mapData,
+        spawnAssignments: generated.spawnAssignments,
+        coreAssignments: generated.coreAssignments,
+        zoneWalls: generated.zoneWalls,
+        layout: generated.layout,
+      };
+      this.map.load(mapData);
+    } else {
+      // 레거시 1v1 맵
+      this.map.load(createDefaultBattleMapData());
+    }
 
     this.simulator = new BattleSimulator(this.map, DEFAULT_BATTLE_CONFIG);
 
@@ -253,8 +274,8 @@ export class GameRoom {
   start(): void {
     this.simulator.init();
 
-    // 플레이어에게 매칭 정보 전송 (SpawnPoint + Core 포함)
-    const mapData = createDefaultBattleMapData();
+    // 플레이어에게 매칭 정보 전송
+    const mapData = this.map.rawData ?? createDefaultBattleMapData();
     const spawnPoints: SpawnPointInfo[] = this.simulator.spawnPoints.map(sp => ({
       id: sp.id,
       x: sp.tile.x,
@@ -284,8 +305,11 @@ export class GameRoom {
       maxHp: w.maxHp,
     }));
 
+    const playerCount = this.players.size;
+
     for (const [playerId, socket] of this.players) {
       if (!socket) continue; // AI 슬롯은 스킵
+      const teamId = this.layout?.zones.find(z => z.playerId === playerId)?.teamId;
       const msg: MatchFoundMsg = {
         roomId: this.id,
         playerId,
@@ -299,6 +323,11 @@ export class GameRoom {
         initialReflectorStock: DEFAULT_BATTLE_CONFIG.initialReflectorStock,
         monsters,
         walls,
+        // N인 필드
+        playerCount,
+        teamId,
+        teams: this.layout?.teams,
+        layout: this.layout,
       };
       socket.emit(SocketEvent.MATCH_FOUND, msg);
     }

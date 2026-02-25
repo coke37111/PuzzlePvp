@@ -46,6 +46,7 @@ export type {
   ItemDroppedMsg, ItemPickedUpMsg, BallPoweredUpMsg,
   PlayerBallCountUpMsg, PlayerSpeedUpMsg, PlayerReflectorExpandMsg,
   SpawnHealedMsg, CoreHealedMsg,
+  LobbyUpdateMsg, PlayerEliminatedMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

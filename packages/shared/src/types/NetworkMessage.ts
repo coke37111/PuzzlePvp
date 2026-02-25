@@ -3,6 +3,7 @@ import { Direction } from '../enums/Direction';
 import { MapData } from '../core/MapModel';
 import { DropItemType } from '../core/ItemModel';
 import { MonsterType } from '../core/MonsterModel';
+import type { MapLayoutConfig, TeamConfig } from '../core/MapLayout';
 
 // ─── 클라이언트 → 서버 ───────────────────────────────────────────
 
@@ -62,17 +63,22 @@ export interface MonsterInfo {
 
 export interface MatchFoundMsg {
   roomId: string;
-  playerId: number;  // 0 또는 1
+  playerId: number;
   mapData: MapData;
   spawnPoints: SpawnPointInfo[];
   cores: CoreInfo[];
-  timePerPhase: number;       // 공 이동 1칸 소요시간 (초)
-  spawnInterval: number;      // 공 자동 발사 주기 (초)
-  reflectorCooldown: number;      // 반사판 1개 재생성 시간 (초)
-  maxReflectorStock: number;      // 반사판 최대 보유 수
-  initialReflectorStock: number;  // 게임 시작 초기 보유 수
-  monsters: MonsterInfo[];         // 몬스터 초기 상태 (플레이어별 1마리씩)
-  walls: WallPlacedMsg[];          // 초기 벽 목록 (중앙 구분벽 포함)
+  timePerPhase: number;
+  spawnInterval: number;
+  reflectorCooldown: number;
+  maxReflectorStock: number;
+  initialReflectorStock: number;
+  monsters: MonsterInfo[];
+  walls: WallPlacedMsg[];
+  // N인 신규 필드 (없으면 레거시 1v1)
+  playerCount?: number;
+  teamId?: number;
+  teams?: TeamConfig[];
+  layout?: MapLayoutConfig;
 }
 
 export interface MonsterSpawnedMsg {
@@ -257,6 +263,22 @@ export interface CoreDestroyedMsg {
   coreId: number;
 }
 
+// ─── 로비 ────────────────────────────────────────────────────────
+
+export interface LobbyUpdateMsg {
+  currentPlayers: number;
+  maxPlayers: number;
+  countdown: number;  // 남은 초, -1이면 카운트다운 미시작
+}
+
+// ─── 플레이어 탈락 ────────────────────────────────────────────────
+
+export interface PlayerEliminatedMsg {
+  playerId: number;
+  teamId: number;
+  remainingPlayers: number;
+}
+
 // ─── Socket.io 이벤트 이름 상수 ──────────────────────────────────
 
 export const SocketEvent = {
@@ -266,6 +288,7 @@ export const SocketEvent = {
   REMOVE_REFLECTOR: 'remove_reflector',
   PLACE_WALL: 'place_wall',
   USE_TIME_STOP: 'use_time_stop',
+  LEAVE_QUEUE: 'leave_queue',
 
   // S → C
   MATCH_FOUND: 'match_found',
@@ -299,4 +322,6 @@ export const SocketEvent = {
   PLAYER_REFLECTOR_EXPAND: 'player_reflector_expand',
   SPAWN_HEALED: 'spawn_healed',
   CORE_HEALED: 'core_healed',
+  LOBBY_UPDATE: 'lobby_update',
+  PLAYER_ELIMINATED: 'player_eliminated',
 } as const;

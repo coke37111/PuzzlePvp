@@ -4,6 +4,7 @@ import { Server, Socket } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import { MatchmakingQueue } from './matchmaking/MatchmakingQueue';
+import { LobbyManager } from './matchmaking/LobbyManager';
 import { GameRoom } from './rooms/GameRoom';
 import { SocketEvent } from '@puzzle-pvp/shared';
 
@@ -35,6 +36,7 @@ const io = new Server(httpServer, {
 let roomCounter = 1;
 const rooms = new Map<string, GameRoom>();
 
+// 레거시 1v1 매칭 (빠른 2인 매칭)
 const matchmaking = new MatchmakingQueue((p1: Socket, p2: Socket) => {
   const roomId = `room_${roomCounter++}`;
   const players = new Map<number, Socket | null>();
@@ -46,6 +48,24 @@ const matchmaking = new MatchmakingQueue((p1: Socket, p2: Socket) => {
   room.start();
 });
 
+// N인 로비 매니저 (10초 카운트다운, AI 채움)
+const lobby = new LobbyManager();
+lobby.onGameReady = (sockets: Socket[], playerCount: number) => {
+  const roomId = `room_${roomCounter++}`;
+  const players = new Map<number, Socket | null>();
+  for (let i = 0; i < sockets.length; i++) {
+    players.set(i, sockets[i]);
+  }
+  // AI 슬롯 (null)
+  for (let i = sockets.length; i < playerCount; i++) {
+    players.set(i, null);
+  }
+  const room = new GameRoom(roomId, players, playerCount);
+  rooms.set(roomId, room);
+  room.onDestroy = () => rooms.delete(roomId);
+  room.start();
+};
+
 io.on('connection', (socket: Socket) => {
   console.log(`[Server] 연결: ${socket.id}`);
 
@@ -54,9 +74,16 @@ io.on('connection', (socket: Socket) => {
     matchmaking.enqueue(socket);
   });
 
+  socket.on(SocketEvent.LEAVE_QUEUE, () => {
+    console.log(`[Server] 매칭 취소: ${socket.id}`);
+    matchmaking.dequeue(socket);
+    lobby.dequeue(socket);
+  });
+
   socket.on('disconnect', () => {
     console.log(`[Server] 연결 종료: ${socket.id}`);
     matchmaking.dequeue(socket);
+    lobby.dequeue(socket);
   });
 });
 
