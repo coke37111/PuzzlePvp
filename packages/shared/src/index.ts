@@ -24,6 +24,7 @@ export { BallSimulator } from './core/BallSimulator';
 export { SpawnPointModel, CoreModel } from './core/SpawnPointModel';
 export { BattleSimulator, DEFAULT_BATTLE_CONFIG } from './core/BattleSimulator';
 export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
+export { TowerBoxModel, TOWER_BOX_HP_TABLE } from './core/TowerBoxModel';
 export { generateNPlayerBattleMap, LAYOUT_TABLE, TOWER_BOX_HP, ZONE_WALL_HP } from './core/MapLayout';
 export type {
   TeamConfig, PlayerZone, MapLayoutConfig,
@@ -47,6 +48,7 @@ export type {
   PlayerBallCountUpMsg, PlayerSpeedUpMsg, PlayerReflectorExpandMsg,
   SpawnHealedMsg, CoreHealedMsg,
   LobbyUpdateMsg, PlayerEliminatedMsg,
+  TowerBoxInfo, TowerBoxDamagedMsg, TowerBoxBrokenMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

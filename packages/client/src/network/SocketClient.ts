@@ -35,6 +35,10 @@ import {
   PlayerReflectorExpandMsg,
   SpawnHealedMsg,
   CoreHealedMsg,
+  TowerBoxDamagedMsg,
+  TowerBoxBrokenMsg,
+  LobbyUpdateMsg,
+  PlayerEliminatedMsg,
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
@@ -77,6 +81,10 @@ export class SocketClient {
   onPlayerReflectorExpand?: (msg: PlayerReflectorExpandMsg) => void;
   onSpawnHealed?: (msg: SpawnHealedMsg) => void;
   onCoreHealed?: (msg: CoreHealedMsg) => void;
+  onTowerBoxDamaged?: (msg: TowerBoxDamagedMsg) => void;
+  onTowerBoxBroken?: (msg: TowerBoxBrokenMsg) => void;
+  onLobbyUpdate?: (msg: LobbyUpdateMsg) => void;
+  onPlayerEliminated?: (msg: PlayerEliminatedMsg) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 
@@ -131,6 +139,10 @@ export class SocketClient {
     this.socket.on(SocketEvent.PLAYER_REFLECTOR_EXPAND, (msg: PlayerReflectorExpandMsg) => this.onPlayerReflectorExpand?.(msg));
     this.socket.on(SocketEvent.SPAWN_HEALED, (msg: SpawnHealedMsg) => this.onSpawnHealed?.(msg));
     this.socket.on(SocketEvent.CORE_HEALED, (msg: CoreHealedMsg) => this.onCoreHealed?.(msg));
+    this.socket.on(SocketEvent.TOWER_BOX_DAMAGED, (msg: TowerBoxDamagedMsg) => this.onTowerBoxDamaged?.(msg));
+    this.socket.on(SocketEvent.TOWER_BOX_BROKEN, (msg: TowerBoxBrokenMsg) => this.onTowerBoxBroken?.(msg));
+    this.socket.on(SocketEvent.LOBBY_UPDATE, (msg: LobbyUpdateMsg) => this.onLobbyUpdate?.(msg));
+    this.socket.on(SocketEvent.PLAYER_ELIMINATED, (msg: PlayerEliminatedMsg) => this.onPlayerEliminated?.(msg));
   }
 
   get isConnected(): boolean {
@@ -147,6 +159,10 @@ export class SocketClient {
 
   joinQueue(): void {
     this.socket.emit(SocketEvent.JOIN_QUEUE);
+  }
+
+  leaveQueue(): void {
+    this.socket.emit(SocketEvent.LEAVE_QUEUE);
   }
 
   placeReflector(x: number, y: number, type: ReflectorType): void {

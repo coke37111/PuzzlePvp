@@ -45,6 +45,8 @@ import {
   SpawnHealedMsg,
   CoreHealedMsg,
   PlayerEliminatedMsg,
+  TowerBoxDamagedMsg,
+  TowerBoxBrokenMsg,
 } from '@puzzle-pvp/shared';
 import type { MapLayoutConfig } from '@puzzle-pvp/shared';
 
@@ -268,6 +270,16 @@ export class GameRoom {
     this.simulator.onCoreHealed = (event) => {
       const msg: CoreHealedMsg = event;
       this.broadcast(SocketEvent.CORE_HEALED, msg);
+    };
+
+    this.simulator.onTowerBoxDamaged = (spawnId, hp, maxHp) => {
+      const msg: TowerBoxDamagedMsg = { spawnId, hp, maxHp };
+      this.broadcast(SocketEvent.TOWER_BOX_DAMAGED, msg);
+    };
+
+    this.simulator.onTowerBoxBroken = (spawnId) => {
+      const msg: TowerBoxBrokenMsg = { spawnId };
+      this.broadcast(SocketEvent.TOWER_BOX_BROKEN, msg);
     };
   }
 

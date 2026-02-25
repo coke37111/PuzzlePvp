@@ -263,6 +263,25 @@ export interface CoreDestroyedMsg {
   coreId: number;
 }
 
+// ─── 타워 박스 ───────────────────────────────────────────────────
+
+export interface TowerBoxInfo {
+  spawnId: number;
+  tier: number;
+  hp: number;
+  maxHp: number;
+}
+
+export interface TowerBoxDamagedMsg {
+  spawnId: number;
+  hp: number;
+  maxHp: number;
+}
+
+export interface TowerBoxBrokenMsg {
+  spawnId: number;
+}
+
 // ─── 로비 ────────────────────────────────────────────────────────
 
 export interface LobbyUpdateMsg {
@@ -324,4 +343,6 @@ export const SocketEvent = {
   CORE_HEALED: 'core_healed',
   LOBBY_UPDATE: 'lobby_update',
   PLAYER_ELIMINATED: 'player_eliminated',
+  TOWER_BOX_DAMAGED: 'tower_box_damaged',
+  TOWER_BOX_BROKEN: 'tower_box_broken',
 } as const;

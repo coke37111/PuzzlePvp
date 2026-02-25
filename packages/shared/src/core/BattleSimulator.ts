@@ -9,6 +9,7 @@ import { Direction } from '../enums/Direction';
 import { ReflectorType } from '../enums/ReflectorType';
 import { EndReason } from '../enums/EndReason';
 import type { SpawnAssignment, CoreAssignment, ZoneWallSegment, PlayerZone } from './MapLayout';
+import { TowerBoxModel } from './TowerBoxModel';
 
 export interface WallState {
   x: number;
@@ -118,6 +119,7 @@ export class BattleSimulator {
   private playerIds: number[] = [0, 1];
   private playerZoneBounds: Map<number, { xMin: number; xMax: number; yMin: number; yMax: number }> = new Map();
   private playerZones: Map<number, PlayerZone> = new Map();
+  private towerBoxes: Map<number, TowerBoxModel> = new Map();  // spawnId → box
 
   // 이벤트
   onSpawnHpChanged?: (event: SpawnEvent) => void;
@@ -150,6 +152,8 @@ export class BattleSimulator {
   onPlayerReflectorExpand?: (playerId: number, reflectorBonus: number) => void;
   onSpawnHealed?: (event: { spawnId: number; hp: number; maxHp: number; ownerId: number }) => void;
   onCoreHealed?: (event: { coreId: number; hp: number; maxHp: number; ownerId: number }) => void;
+  onTowerBoxDamaged?: (spawnId: number, hp: number, maxHp: number) => void;
+  onTowerBoxBroken?: (spawnId: number) => void;
 
   private monsters: Map<number, MonsterModel[]> = new Map();
   private monsterGeneration: Map<number, number> = new Map();
@@ -235,6 +239,7 @@ export class BattleSimulator {
     this.nextMonsterId = 1;
     this.droppedItems.clear();
     this.nextItemId = 1;
+    this.towerBoxes.clear();
 
     // N인 경로 vs 레거시 1v1 경로 분기
     const raw = this.map.rawData;
@@ -333,6 +338,25 @@ export class BattleSimulator {
 
       // 4. 스폰포인트 체크 (소유권 기반)
       const sp = this.spawnPoints.find(s => s.tile.x === tile.x && s.tile.y === tile.y);
+
+      // 4a. 타워 박스 체크 (잠긴 타워 → 박스가 있으면 박스에 데미지)
+      if (sp && !sp.active) {
+        const box = this.towerBoxes.get(sp.id);
+        if (box && !box.broken) {
+          const destroyed = box.damage(ball.power);
+          this.onTowerBoxDamaged?.(sp.id, box.hp, box.maxHp);
+          if (destroyed) {
+            this.onTowerBoxBroken?.(sp.id);
+            // 타워 활성화
+            sp.active = true;
+            sp.hp = this.config.spawnHp;
+            sp.maxHp = this.config.spawnHp;
+            this.onSpawnRespawned?.(sp.id, sp.hp);
+          }
+          return true; // 공 캡처
+        }
+      }
+
       if (sp && sp.active) {
         if (ball.ownerId === sp.ownerId) {
           // 아군 공 → 힐
@@ -492,10 +516,12 @@ export class BattleSimulator {
       if (!tile) continue;
       const sp = new SpawnPointModel(this.nextSpawnPointId++, tile, sa.ownerId, sa.direction, this.config.spawnHp);
       if (sa.locked) {
-        sp.active = false; // 잠긴 타워는 비활성 (세션 4에서 박스 파괴 시 활성화)
+        sp.active = false; // 잠긴 타워는 비활성 (박스 파괴 시 활성화)
       }
       this.spawnPoints.push(sp);
-      // TODO 세션 4: sa.boxTier > 0이면 TowerBoxModel 생성
+      if (sa.locked && sa.boxTier > 0) {
+        this.towerBoxes.set(sp.id, new TowerBoxModel(sp.id, sa.boxTier));
+      }
     }
 
     // 존 경계 벽 배치 (WallState 시스템 활용)
