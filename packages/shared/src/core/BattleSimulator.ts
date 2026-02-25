@@ -154,6 +154,7 @@ export class BattleSimulator {
   onCoreHealed?: (event: { coreId: number; hp: number; maxHp: number; ownerId: number }) => void;
   onTowerBoxDamaged?: (spawnId: number, hp: number, maxHp: number) => void;
   onTowerBoxBroken?: (spawnId: number) => void;
+  onPlayerEliminated?: (playerId: number, teamId: number, remainingPlayers: number) => void;
 
   private monsters: Map<number, MonsterModel[]> = new Map();
   private monsterGeneration: Map<number, number> = new Map();
@@ -391,7 +392,7 @@ export class BattleSimulator {
           this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
           if (!core.active) {
             this.onCoreDestroyed?.(core.id);
-            this.checkWinCondition();
+            this.eliminatePlayer(core.ownerId);
           }
         }
         return true; // 공 캡처
@@ -734,19 +735,55 @@ export class BattleSimulator {
     return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
-  private checkWinCondition(): void {
-    const p0CoreAlive = this.cores.some(c => c.ownerId === 0 && c.active);
-    const p1CoreAlive = this.cores.some(c => c.ownerId === 1 && c.active);
+  /** 플레이어 탈락 처리: 스폰/코어 비활성화 후 승리 조건 체크 */
+  eliminatePlayer(playerId: number): void {
+    for (const sp of this.spawnPoints) {
+      if (sp.ownerId === playerId) sp.active = false;
+    }
+    for (const core of this.cores) {
+      if (core.ownerId === playerId) core.active = false;
+    }
+    const zone = this.playerZones.get(playerId);
+    if (zone) zone.eliminated = true;
 
-    if (!p0CoreAlive && !p1CoreAlive) {
-      this.isRunning = false;
-      this.onGameOver?.({ winnerId: -1 });
-    } else if (!p0CoreAlive) {
-      this.isRunning = false;
-      this.onGameOver?.({ winnerId: 1 });
-    } else if (!p1CoreAlive) {
-      this.isRunning = false;
-      this.onGameOver?.({ winnerId: 0 });
+    const alivePlayerIds = new Set<number>();
+    for (const core of this.cores) {
+      if (core.active) alivePlayerIds.add(core.ownerId);
+    }
+    const teamId = zone?.teamId ?? playerId;
+    this.onPlayerEliminated?.(playerId, teamId, alivePlayerIds.size);
+    this.checkWinCondition();
+  }
+
+  private checkWinCondition(): void {
+    if (this.playerZones.size > 0) {
+      // N인 모드: 팀 기반 체크
+      const aliveTeams = new Set<number>();
+      for (const core of this.cores) {
+        if (core.active) {
+          const z = this.playerZones.get(core.ownerId);
+          if (z) aliveTeams.add(z.teamId);
+        }
+      }
+      if (aliveTeams.size <= 1) {
+        this.isRunning = false;
+        const winnerTeamId = aliveTeams.size === 1 ? [...aliveTeams][0] : -1;
+        this.onGameOver?.({ winnerId: winnerTeamId });
+      }
+    } else {
+      // 레거시 1v1 경로
+      const p0CoreAlive = this.cores.some(c => c.ownerId === 0 && c.active);
+      const p1CoreAlive = this.cores.some(c => c.ownerId === 1 && c.active);
+      if (!p0CoreAlive && !p1CoreAlive) {
+        this.isRunning = false;
+        this.onGameOver?.({ winnerId: -1 });
+      } else if (!p0CoreAlive) {
+        this.isRunning = false;
+        this.onGameOver?.({ winnerId: 1 });
+      } else if (!p1CoreAlive) {
+        this.isRunning = false;
+        this.onGameOver?.({ winnerId: 0 });
+      }
     }
   }
 

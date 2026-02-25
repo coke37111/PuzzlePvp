@@ -158,6 +158,9 @@ interface WallVisual {
 export class GameScene extends Phaser.Scene {
   private socket!: SocketClient;
   private myPlayerId: number = 0;
+  private myTeamId: number = 0;
+  private totalPlayerCount: number = 2;
+  private remainingPlayersText: Phaser.GameObjects.Text | null = null;
   private mapData!: MapData;
   private mapModel!: MapModel;
   private serverSpawnPoints: SpawnPointInfo[] = [];
@@ -261,6 +264,8 @@ export class GameScene extends Phaser.Scene {
   init(data: { matchData: MatchFoundMsg; socket: SocketClient }): void {
     this.socket = data.socket;
     this.myPlayerId = data.matchData.playerId;
+    this.myTeamId = data.matchData.teamId ?? this.myPlayerId;
+    this.totalPlayerCount = data.matchData.playerCount ?? 2;
     this.mapData = data.matchData.mapData;
     this.serverSpawnPoints = data.matchData.spawnPoints || [];
     this.serverCores = data.matchData.cores || [];
@@ -415,6 +420,7 @@ export class GameScene extends Phaser.Scene {
     this.socket.onTowerBoxBroken = undefined;
     this.socket.onLobbyUpdate = undefined;
     this.socket.onPlayerEliminated = undefined;
+    this.remainingPlayersText = null;
     this.monsterVisuals.clear();
     this.itemVisuals.clear();
     this.reflectorSlotBgs = [];
@@ -1246,6 +1252,14 @@ export class GameScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const opponentId = 1 - this.myPlayerId;
 
+    // 상단 중앙: 남은 유저 수 (N인 모드에서 유용)
+    const remText = this.add.text(width / 2, 4, `${this.totalPlayerCount}/${this.totalPlayerCount}명`, {
+      fontSize: '15px', color: '#ffffff', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5, 0).setDepth(10);
+    this.remainingPlayersText = remText;
+    this.uiLayer.add(remText);
+
     // 볼륨 토글 버튼 (좌상단)
     const BTN_W = 52, BTN_H = 20;
     const btnX = 8 + BTN_W / 2;
@@ -1731,8 +1745,21 @@ export class GameScene extends Phaser.Scene {
       this.updateReflectorCount();
     };
 
+    this.socket.onPlayerEliminated = (msg) => {
+      this.remainingPlayersText?.setText(`${msg.remainingPlayers}/${this.totalPlayerCount}명`);
+      // 탈락 존 시각적 표시 (N인 모드, 자신 제외)
+      if (this.layout && msg.playerId !== this.myPlayerId) {
+        const zone = this.layout.zones.find(z => z.playerId === msg.playerId);
+        if (zone) this.showEliminatedZoneOverlay(zone.originX, zone.originY, zone.width, zone.height);
+      }
+    };
+
     this.socket.onGameOver = (msg: GameOverMsg) => {
-      if (msg.winnerId === this.myPlayerId) {
+      // N인 모드: winnerId = 승리 팀 ID, 1v1: winnerId = 승리 플레이어 ID
+      const myId = this.layout ? this.myTeamId : this.myPlayerId;
+      if (msg.winnerId === -1) {
+        this.sfx.gameLose();
+      } else if (msg.winnerId === myId) {
         this.sfx.gameWin();
       } else {
         this.sfx.gameLose();
@@ -1740,7 +1767,7 @@ export class GameScene extends Phaser.Scene {
       this.time.delayedCall(1000, () => {
         this.scene.launch('ResultScene', {
           winnerId: msg.winnerId,
-          myPlayerId: this.myPlayerId,
+          myPlayerId: myId,
         });
       });
     };
@@ -2214,6 +2241,14 @@ export class GameScene extends Phaser.Scene {
       this.cameras.main.centerOn(cx, cy);
       this.cameras.main.setZoom(1.0);
     }
+  }
+
+  private showEliminatedZoneOverlay(originX: number, originY: number, zoneW: number, zoneH: number): void {
+    const px = originX * TILE_SIZE + (zoneW * TILE_SIZE) / 2;
+    const py = originY * TILE_SIZE + (zoneH * TILE_SIZE) / 2;
+    const overlay = this.add.rectangle(px, py, zoneW * TILE_SIZE, zoneH * TILE_SIZE, 0x000000, 0.55)
+      .setDepth(20);
+    this.tilesLayer.add(overlay);
   }
 
   private drawReflector(gridX: number, gridY: number, type: ReflectorType, playerId: number): void {

@@ -281,6 +281,11 @@ export class GameRoom {
       const msg: TowerBoxBrokenMsg = { spawnId };
       this.broadcast(SocketEvent.TOWER_BOX_BROKEN, msg);
     };
+
+    this.simulator.onPlayerEliminated = (playerId, teamId, remainingPlayers) => {
+      const msg: PlayerEliminatedMsg = { playerId, teamId, remainingPlayers };
+      this.broadcast(SocketEvent.PLAYER_ELIMINATED, msg);
+    };
   }
 
   start(): void {
@@ -378,14 +383,7 @@ export class GameRoom {
       socket.on('disconnect', () => {
         if (!this.tickTimer) return;  // 이미 종료된 게임 무시
         console.log(`[GameRoom ${this.id}] 플레이어 ${playerId} 연결 끊김`);
-        // 상대 플레이어에게 승리 알림 (1v1 레거시: winnerId = 상대 playerId)
-        const opponentId = playerId === 0 ? 1 : 0;
-        const opponentSocket = this.players.get(opponentId);
-        if (opponentSocket?.connected) {
-          const msg: GameOverMsg = { winnerId: opponentId };
-          opponentSocket.emit(SocketEvent.GAME_OVER, msg);
-        }
-        this.stop();
+        this.simulator.eliminatePlayer(playerId);
       });
     }
 
