@@ -82,6 +82,8 @@ interface BallVisual {
   shine: Phaser.GameObjects.Arc;
   ballId: number;
   ownerId: number;
+  lastDx: number;  // 마지막 이동 방향 (픽셀 단위, TILE_SIZE 기준)
+  lastDy: number;
 }
 
 interface MonsterVisual {
@@ -1463,12 +1465,16 @@ export class GameScene extends Phaser.Scene {
         this.ballsLayer.add(circle);
         const shine = this.add.circle(px, py, 4, 0xffffff, 0.4);
         this.ballsLayer.add(shine);
-        this.ballVisuals.set(msg.ballId, { circle, shine, ballId: msg.ballId, ownerId: pending.ownerId });
+        this.ballVisuals.set(msg.ballId, { circle, shine, ballId: msg.ballId, ownerId: pending.ownerId, lastDx: 0, lastDy: 0 });
         animBallSpawn(this, [circle, shine], this.getBallScale(pending.ownerId));
       }
 
       const visual = this.ballVisuals.get(msg.ballId);
       if (!visual) return;
+
+      // 방향 추적 (다음 onBallEnded에서 반칸 전진에 사용)
+      visual.lastDx = (msg.toX - msg.fromX) * TILE_SIZE;
+      visual.lastDy = (msg.toY - msg.fromY) * TILE_SIZE;
 
       const toX = msg.toX * TILE_SIZE + TILE_SIZE / 2;
       const toY = msg.toY * TILE_SIZE + TILE_SIZE / 2;
@@ -1503,7 +1509,7 @@ export class GameScene extends Phaser.Scene {
 
       const isMyBall = visual.ownerId === this.myPlayerId;
       const ballColor = BALL_TEAM_COLORS[isMyBall ? 0 : 1];
-      animBallEnd(
+      const explode = () => animBallEnd(
         this,
         this.ballsLayer,
         [visual.circle, visual.shine],
@@ -1518,6 +1524,21 @@ export class GameScene extends Phaser.Scene {
         },
         visual.circle.scaleX,
       );
+
+      // 반칸 더 전진 후 폭발
+      const halfDur = this.timePerPhase * 500 * 0.5;
+      if (visual.lastDx !== 0 || visual.lastDy !== 0) {
+        this.tweens.add({
+          targets: [visual.circle, visual.shine],
+          x: visual.circle.x + visual.lastDx * 0.5,
+          y: visual.circle.y + visual.lastDy * 0.5,
+          duration: halfDur,
+          ease: 'Linear',
+          onComplete: explode,
+        });
+      } else {
+        explode();
+      }
     };
 
     this.socket.onSpawnHp = (msg: SpawnHpMsg) => {
