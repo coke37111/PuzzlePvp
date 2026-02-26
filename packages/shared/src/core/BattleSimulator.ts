@@ -756,6 +756,12 @@ export class BattleSimulator {
       oldQueue.length = 0;
     }
 
+    // 점령자 반사판 슬롯 확장 (점령한 존의 기본 슬롯만큼 추가)
+    const currentBonus = this.playerReflectorBonus.get(newOwnerId) ?? 0;
+    const newBonus = currentBonus + this.config.maxReflectorsPerPlayer;
+    this.playerReflectorBonus.set(newOwnerId, newBonus);
+    this.onPlayerReflectorExpand?.(newOwnerId, newBonus);
+
     // 존 소유권 이전
     const zone = this.playerZones.get(oldOwnerId);
     if (zone) {
