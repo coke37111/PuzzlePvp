@@ -5,7 +5,6 @@ import {
   DEFAULT_BATTLE_CONFIG,
   MapModel,
   createBattleTileRegistry,
-  createDefaultBattleMapData,
   generateNPlayerBattleMap,
   SocketEvent,
   PlaceReflectorMsg,
@@ -48,6 +47,7 @@ import {
   PlayerEliminatedMsg,
   TowerBoxDamagedMsg,
   TowerBoxBrokenMsg,
+  OwnershipTransferredMsg,
 } from '@puzzle-pvp/shared';
 import type { MapLayoutConfig } from '@puzzle-pvp/shared';
 
@@ -68,27 +68,20 @@ export class GameRoom {
     this.id = id;
     this.players = players;
 
-    // 맵 및 시뮬레이터 초기화
+    // 맵 및 시뮬레이터 초기화 (2인 포함 항상 N:N 동적 맵)
     const registry = createBattleTileRegistry();
     this.map = new MapModel(registry);
     const count = playerCount ?? players.size;
 
-    if (count > 2) {
-      // N인 동적 맵 생성
-      const generated = generateNPlayerBattleMap(count);
-      this.layout = generated.layout;
-      const mapData = {
-        ...generated.mapData,
-        spawnAssignments: generated.spawnAssignments,
-        coreAssignments: generated.coreAssignments,
-        zoneWalls: generated.zoneWalls,
-        layout: generated.layout,
-      };
-      this.map.load(mapData);
-    } else {
-      // 레거시 1v1 맵
-      this.map.load(createDefaultBattleMapData());
-    }
+    const generated = generateNPlayerBattleMap(count);
+    this.layout = generated.layout;
+    this.map.load({
+      ...generated.mapData,
+      spawnAssignments: generated.spawnAssignments,
+      coreAssignments: generated.coreAssignments,
+      zoneWalls: generated.zoneWalls,
+      layout: generated.layout,
+    });
 
     this.simulator = new BattleSimulator(this.map, DEFAULT_BATTLE_CONFIG);
 
@@ -285,6 +278,11 @@ export class GameRoom {
       this.broadcast(SocketEvent.TOWER_BOX_BROKEN, msg);
     };
 
+    this.simulator.onOwnershipTransferred = (oldOwnerId, newOwnerId, coreId, coreHp, coreMaxHp, spawnTransfers) => {
+      const msg: OwnershipTransferredMsg = { oldOwnerId, newOwnerId, coreId, coreHp, coreMaxHp, spawnTransfers };
+      this.broadcast(SocketEvent.OWNERSHIP_TRANSFERRED, msg);
+    };
+
     this.simulator.onPlayerEliminated = (playerId, teamId, remainingPlayers) => {
       const msg: PlayerEliminatedMsg = { playerId, teamId, remainingPlayers };
       this.broadcast(SocketEvent.PLAYER_ELIMINATED, msg);
@@ -295,7 +293,7 @@ export class GameRoom {
     this.simulator.init();
 
     // 플레이어에게 매칭 정보 전송
-    const mapData = this.map.rawData ?? createDefaultBattleMapData();
+    const mapData = this.map.rawData!;
     const spawnPoints: SpawnPointInfo[] = this.simulator.spawnPoints.map(sp => ({
       id: sp.id,
       x: sp.tile.x,
@@ -324,6 +322,12 @@ export class GameRoom {
       hp: w.hp,
       maxHp: w.maxHp,
     }));
+    const towerBoxes = this.simulator.getTowerBoxes().map(b => ({
+      spawnId: b.spawnPointId,
+      tier: b.tier,
+      hp: b.hp,
+      maxHp: b.maxHp,
+    }));
 
     const playerCount = this.players.size;
 
@@ -348,6 +352,7 @@ export class GameRoom {
         teamId,
         teams: this.layout?.teams,
         layout: this.layout,
+        towerBoxes,
       };
       socket.emit(SocketEvent.MATCH_FOUND, msg);
     }

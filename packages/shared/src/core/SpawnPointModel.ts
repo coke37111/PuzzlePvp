@@ -4,7 +4,7 @@ import { Direction } from '../enums/Direction';
 export class CoreModel {
   readonly id: number;
   readonly tile: TileModel;
-  readonly ownerId: number;
+  ownerId: number;
   maxHp: number;
   hp: number;
   active: boolean = true;
@@ -38,7 +38,7 @@ export class CoreModel {
 export class SpawnPointModel {
   readonly id: number;
   readonly tile: TileModel;
-  readonly ownerId: number;
+  ownerId: number;
   readonly spawnDirection: Direction;
   maxHp: number;
   hp: number;

@@ -40,6 +40,7 @@ import {
   TowerBoxBrokenMsg,
   LobbyUpdateMsg,
   PlayerEliminatedMsg,
+  OwnershipTransferredMsg,
   ReflectorType,
 } from '@puzzle-pvp/shared';
 
@@ -86,6 +87,7 @@ export class SocketClient {
   onTowerBoxBroken?: (msg: TowerBoxBrokenMsg) => void;
   onLobbyUpdate?: (msg: LobbyUpdateMsg) => void;
   onPlayerEliminated?: (msg: PlayerEliminatedMsg) => void;
+  onOwnershipTransferred?: (msg: OwnershipTransferredMsg) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 
@@ -144,6 +146,7 @@ export class SocketClient {
     this.socket.on(SocketEvent.TOWER_BOX_BROKEN, (msg: TowerBoxBrokenMsg) => this.onTowerBoxBroken?.(msg));
     this.socket.on(SocketEvent.LOBBY_UPDATE, (msg: LobbyUpdateMsg) => this.onLobbyUpdate?.(msg));
     this.socket.on(SocketEvent.PLAYER_ELIMINATED, (msg: PlayerEliminatedMsg) => this.onPlayerEliminated?.(msg));
+    this.socket.on(SocketEvent.OWNERSHIP_TRANSFERRED, (msg: OwnershipTransferredMsg) => this.onOwnershipTransferred?.(msg));
   }
 
   get isConnected(): boolean {

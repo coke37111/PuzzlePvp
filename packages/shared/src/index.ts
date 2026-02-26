@@ -25,7 +25,7 @@ export { SpawnPointModel, CoreModel } from './core/SpawnPointModel';
 export { BattleSimulator, DEFAULT_BATTLE_CONFIG } from './core/BattleSimulator';
 export { createBattleTileRegistry, TILE_INDEX } from './core/TileRegistry';
 export { TowerBoxModel, TOWER_BOX_HP_TABLE } from './core/TowerBoxModel';
-export { generateNPlayerBattleMap, LAYOUT_TABLE, TOWER_BOX_HP, ZONE_WALL_HP } from './core/MapLayout';
+export { generateNPlayerBattleMap, LAYOUT_TABLE, TOWER_BOX_HP } from './core/MapLayout';
 export type {
   TeamConfig, PlayerZone, MapLayoutConfig,
   SpawnAssignment, CoreAssignment, ZoneWallSegment, GeneratedMap,
@@ -49,7 +49,7 @@ export type {
   SpawnHealedMsg, CoreHealedMsg,
   LobbyUpdateMsg, PlayerEliminatedMsg,
   TowerBoxInfo, TowerBoxDamagedMsg, TowerBoxBrokenMsg,
-  SetTargetPlayersMsg,
+  SetTargetPlayersMsg, OwnershipTransferredMsg,
 } from './types/NetworkMessage';
 export { SocketEvent } from './types/NetworkMessage';
 

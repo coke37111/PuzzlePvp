@@ -50,6 +50,7 @@ export interface BattleConfig {
   wallHp: number;           // 성벽 HP (기본 10)
   timeStopUsesPerPlayer: number;   // 시간 정지 사용 횟수 (기본 1)
   timeStopDuration: number; // 시간 정지 지속 시간 초 (기본 5)
+  initialBallPower: number; // 공 초기 공격력 (기본 3)
 }
 
 export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
@@ -65,6 +66,7 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   wallHp: 10,
   timeStopUsesPerPlayer: 1,
   timeStopDuration: 5,
+  initialBallPower: 3,
 };
 
 export interface CoreEvent {
@@ -154,7 +156,11 @@ export class BattleSimulator {
   onCoreHealed?: (event: { coreId: number; hp: number; maxHp: number; ownerId: number }) => void;
   onTowerBoxDamaged?: (spawnId: number, hp: number, maxHp: number) => void;
   onTowerBoxBroken?: (spawnId: number) => void;
+  onOwnershipTransferred?: (oldOwnerId: number, newOwnerId: number, coreId: number, coreHp: number, coreMaxHp: number, spawnTransfers: { spawnId: number; hp: number; maxHp: number; active: boolean }[]) => void;
   onPlayerEliminated?: (playerId: number, teamId: number, remainingPlayers: number) => void;
+
+  /** 카메라 연출 동안 게임 시작 지연 (초) */
+  static readonly PRE_GAME_DELAY = 4.0;
 
   private monsters: Map<number, MonsterModel[]> = new Map();
   private monsterGeneration: Map<number, number> = new Map();
@@ -201,6 +207,20 @@ export class BattleSimulator {
     return Array.from(this.walls.values());
   }
 
+  getTowerBoxes(): TowerBoxModel[] {
+    return Array.from(this.towerBoxes.values());
+  }
+
+  getDroppedItemPositions(): { x: number; y: number }[] {
+    return Array.from(this.droppedItems.values())
+      .filter(item => !item.pickedUp)
+      .map(item => ({ x: item.x, y: item.y }));
+  }
+
+  getDroppedItems(): DroppedItemModel[] {
+    return Array.from(this.droppedItems.values()).filter(item => !item.pickedUp);
+  }
+
   get isGameTimeStopped(): boolean {
     return this.isTimeStopped;
   }
@@ -232,7 +252,7 @@ export class BattleSimulator {
     for (const pid of this.playerIds) {
       this.monsters.set(pid, []);
       this.monsterGeneration.set(pid, 0);
-      this.playerBasePower.set(pid, 1);
+      this.playerBasePower.set(pid, this.config.initialBallPower);
       this.playerBallCountBonus.set(pid, 0);
       this.playerSpeedMultiplier.set(pid, 1.0);
       this.playerReflectorBonus.set(pid, 0);
@@ -242,13 +262,9 @@ export class BattleSimulator {
     this.nextItemId = 1;
     this.towerBoxes.clear();
 
-    // N인 경로 vs 레거시 1v1 경로 분기
-    const raw = this.map.rawData;
-    if (raw?.spawnAssignments && raw?.coreAssignments) {
-      this.initFromAssignments(raw.spawnAssignments, raw.coreAssignments, raw.zoneWalls ?? []);
-    } else {
-      this.initLegacy();
-    }
+    // 항상 assignments 기반 초기화 (N:N 포함 2인도 동일 경로)
+    const raw = this.map.rawData!;
+    this.initFromAssignments(raw.spawnAssignments!, raw.coreAssignments!, raw.zoneWalls ?? []);
 
     // BallSimulator 이벤트 연결
     this.simulator.onBallCreated = (ball, dir) => this.onBallCreated?.(ball, dir);
@@ -373,6 +389,8 @@ export class BattleSimulator {
             this.spawnRespawnTimers.set(sp.id, respawnDelay);
             this.onSpawnDestroyed?.(sp.id, respawnDelay);
             this.trimReflectorsForPlayer(sp.ownerId);
+            // 파괴된 스폰의 발사 대기 큐 클리어 (이미 큐잉된 공이 계속 나오는 버그 방지)
+            this.spawnQueues.set(sp.id, []);
           }
           this.onSpawnHpChanged?.({ spawnId: sp.id, hp: sp.hp, ownerId: sp.ownerId });
         }
@@ -392,7 +410,7 @@ export class BattleSimulator {
           this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
           if (!core.active) {
             this.onCoreDestroyed?.(core.id);
-            this.eliminatePlayer(core.ownerId);
+            this.transferOwnership(core, ball.ownerId);
           }
         }
         return true; // 공 캡처
@@ -404,67 +422,8 @@ export class BattleSimulator {
     // BallSimulator 배틀 모드 초기화 (bracket notation 제거)
     this.simulator.initForBattle(this.config.timePerPhase);
 
-    // 첫 틱에서 바로 발사되도록 타이머를 가득 채움 (MATCH_FOUND 이후 발사 보장)
-    this.spawnTimer = this.config.spawnInterval;
-  }
-
-  /** 레거시 1v1 초기화 — uniqueIndex 기반 스폰/코어 배치 */
-  private initLegacy(): void {
-    // 존 경계 설정 (레거시 1v1: P1은 x<=5, P2는 x>=7)
-    this.playerZoneBounds.set(0, { xMin: 0, xMax: 5, yMin: 0, yMax: this.map.height - 1 });
-    this.playerZoneBounds.set(1, { xMin: 7, xMax: this.map.width - 1, yMin: 0, yMax: this.map.height - 1 });
-
-    // 스타트 타일에서 SpawnPoint 생성
-    // uniqueIndex 2,4 = P1(ownerId=0), 3,5 = P2(ownerId=1)
-    const startTiles = this.map.getStartTiles();
-    for (const tile of startTiles) {
-      const idx = tile.tileData.uniqueIndex;
-      const ownerId = (idx === 2 || idx === 4) ? 0 : 1;
-      const dir = tile.startDirection;
-      const sp = new SpawnPointModel(this.nextSpawnPointId++, tile, ownerId, dir, this.config.spawnHp);
-      this.spawnPoints.push(sp);
-    }
-
-    // 코어 타일에서 CoreModel 생성
-    // uniqueIndex 6 = P1(ownerId=0), 8 = P2(ownerId=1)
-    const coreTiles = this.map.getCoreTiles();
-    for (const tile of coreTiles) {
-      const ownerId = tile.tileData.uniqueIndex === 6 ? 0 : 1;
-      const core = new CoreModel(this.nextCoreId++, tile, ownerId, this.config.coreHp);
-      this.cores.push(core);
-    }
-
-    // 중앙 라인(x=6) 초기 벽 배치
-    const centerWalls: { y: number; hp: number }[] = [
-      { y: 0, hp: 10_000_000 },
-      { y: 1, hp:  1_000_000 },
-      { y: 2, hp:    100_000 },
-      { y: 3, hp:     10_000 },
-      { y: 4, hp:        100 },
-      { y: 5, hp:      1_000 },
-      { y: 6, hp:     10_000 },
-      { y: 7, hp:    100_000 },
-      { y: 8, hp:  1_000_000 },
-    ];
-    for (const { y, hp } of centerWalls) {
-      const wall: WallState = { x: 6, y, hp, maxHp: hp, ownerId: -1 };
-      this.walls.set(`6,${y}`, wall);
-    }
-
-    // 각 플레이어 진영에 MAX_MONSTERS_PER_ZONE마리 몬스터를 확률로 생성
-    for (const pid of this.playerIds) {
-      const monsterList = this.monsters.get(pid)!;
-      for (let i = 0; i < BattleSimulator.MAX_MONSTERS_PER_ZONE; i++) {
-        const tile = this.pickRandomEmptyTile(pid);
-        if (tile) {
-          const monsterType = this.pickRandomMonsterType();
-          const gen = this.monsterGeneration.get(pid) ?? 0;
-          const m = new MonsterModel(this.nextMonsterId++, monsterType, tile.x, tile.y, Math.ceil(Math.pow(1.1, gen)));
-          monsterList.push(m);
-          this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
-        }
-      }
-    }
+    // Pre-game delay: 카메라 연출(2초 전체맵 + 1초 포커싱 + 1초 대기) 후 첫 발사
+    this.spawnTimer = -BattleSimulator.PRE_GAME_DELAY;
   }
 
   /** N인 초기화 — spawnAssignments/coreAssignments 기반 */
@@ -488,8 +447,16 @@ export class BattleSimulator {
           yMax: zone.originY + zone.height - 1,
         });
       }
-      // 새 플레이어에 대한 아이템/반사판 큐 초기화
+      // 새 플레이어에 대한 모든 per-player 맵 초기화 (init()이 [0,1]로만 설정했을 수 있음)
       for (const pid of this.playerIds) {
+        if (!this.monsters.has(pid)) {
+          this.monsters.set(pid, []);
+          this.monsterGeneration.set(pid, 0);
+          this.playerBasePower.set(pid, this.config.initialBallPower);
+          this.playerBallCountBonus.set(pid, 0);
+          this.playerSpeedMultiplier.set(pid, 1.0);
+          this.playerReflectorBonus.set(pid, 0);
+        }
         if (!this.reflectorQueues.has(pid)) {
           this.reflectorQueues.set(pid, []);
         }
@@ -663,6 +630,21 @@ export class BattleSimulator {
       }
     }
 
+    // 각 존 몬스터 수 보충 (처치 후 리스폰 실패로 감소한 경우 복구)
+    for (const pid of this.playerIds) {
+      const monsterList = this.monsters.get(pid)!;
+      const activeCount = monsterList.filter(m => m.active).length;
+      const deficit = BattleSimulator.MAX_MONSTERS_PER_ZONE - activeCount;
+      for (let i = 0; i < deficit; i++) {
+        const tile = this.pickRandomEmptyTile(pid);
+        if (!tile) break;
+        const gen = this.monsterGeneration.get(pid) ?? 0;
+        const m = new MonsterModel(this.nextMonsterId++, this.pickRandomMonsterType(), tile.x, tile.y, Math.ceil(Math.pow(1.1, gen)));
+        monsterList.push(m);
+        this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
+      }
+    }
+
     // 타워별 큐에 추가 (페이즈 경계마다 1발씩 순차 발사 → 겹침 방지)
     for (const sp of this.spawnPoints) {
       if (!sp.active) continue;
@@ -735,6 +717,61 @@ export class BattleSimulator {
     return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
+  /** 코어 파괴 시 소유권 이전: 코어 + 스폰 타워를 공격자에게 넘기고 재활성화 */
+  private transferOwnership(destroyedCore: CoreModel, newOwnerId: number): void {
+    const oldOwnerId = destroyedCore.ownerId;
+
+    // 코어 소유권 이전 및 재활성화
+    destroyedCore.ownerId = newOwnerId;
+    destroyedCore.maxHp = this.config.coreHp;
+    destroyedCore.hp = this.config.coreHp;
+    destroyedCore.active = true;
+
+    // 해당 플레이어의 모든 스폰 타워 소유권 이전
+    const spawnTransfers: { spawnId: number; hp: number; maxHp: number; active: boolean }[] = [];
+    for (const sp of this.spawnPoints) {
+      if (sp.ownerId === oldOwnerId) {
+        sp.ownerId = newOwnerId;
+        // 파괴 상태인 스폰은 즉시 재활성화
+        if (!sp.active) {
+          sp.hp = this.config.spawnHp;
+          sp.maxHp = this.config.spawnHp;
+          sp.active = true;
+          this.spawnRespawnTimers.delete(sp.id);
+        }
+        spawnTransfers.push({ spawnId: sp.id, hp: sp.hp, maxHp: sp.maxHp, active: sp.active });
+      }
+    }
+
+    // 이전 주인의 반사판 제거
+    const oldQueue = this.reflectorQueues.get(oldOwnerId);
+    if (oldQueue) {
+      for (const tileIdx of [...oldQueue]) {
+        const placement = this.map.reflectors.get(tileIdx);
+        if (placement) {
+          this.map.reflectors.delete(tileIdx);
+          this.onReflectorRemoved?.(placement.x, placement.y, oldOwnerId);
+        }
+      }
+      oldQueue.length = 0;
+    }
+
+    // 존 소유권 이전
+    const zone = this.playerZones.get(oldOwnerId);
+    if (zone) {
+      zone.eliminated = true;
+    }
+
+    // 콜백 알림
+    this.onOwnershipTransferred?.(
+      oldOwnerId, newOwnerId, destroyedCore.id,
+      destroyedCore.hp, destroyedCore.maxHp, spawnTransfers,
+    );
+
+    // 승리 조건 체크
+    this.checkWinCondition();
+  }
+
   /** 플레이어 탈락 처리: 스폰/코어 비활성화 후 승리 조건 체크 */
   eliminatePlayer(playerId: number): void {
     for (const sp of this.spawnPoints) {
@@ -787,9 +824,14 @@ export class BattleSimulator {
     }
   }
 
-  /** 현재 유효 반사판 최대 슬롯 (파괴된 아군 스폰 수만큼 감소, 아이템 보너스 포함) */
+  /** 현재 유효 반사판 최대 슬롯 (전투로 파괴된 아군 스폰 수만큼 감소, 아이템 보너스 포함) */
   getEffectiveMaxReflectors(playerId: number): number {
-    const destroyed = this.spawnPoints.filter(sp => sp.ownerId === playerId && !sp.active).length;
+    // 잠긴 타워(박스 미파괴)는 파괴 카운트에서 제외 — 전투로 파괴된 타워만 카운트
+    const destroyed = this.spawnPoints.filter(sp => {
+      if (sp.ownerId !== playerId || sp.active) return false;
+      const box = this.towerBoxes.get(sp.id);
+      return !(box && !box.broken); // 박스가 살아있으면 잠긴 상태 → 제외
+    }).length;
     return Math.max(0, this.config.maxReflectorsPerPlayer + (this.playerReflectorBonus.get(playerId) ?? 0) - destroyed);
   }
 

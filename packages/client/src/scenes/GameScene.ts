@@ -43,6 +43,10 @@ import {
   MonsterType,
   DropItemType,
   Direction,
+  TowerBoxInfo,
+  TowerBoxDamagedMsg,
+  TowerBoxBrokenMsg,
+  OwnershipTransferredMsg,
 } from '@puzzle-pvp/shared';
 
 import {
@@ -137,6 +141,7 @@ interface CoreVisual {
   hpBar: Phaser.GameObjects.Rectangle;
   hpBarBg: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
+  diamond: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   maxHp: number;
@@ -152,6 +157,18 @@ interface WallVisual {
   hpText: Phaser.GameObjects.Text;
   x: number;
   y: number;
+  maxHp: number;
+  currentHp: number;
+}
+
+interface TowerBoxVisual {
+  bg: Phaser.GameObjects.Rectangle;
+  crossA: Phaser.GameObjects.Graphics;
+  crossB: Phaser.GameObjects.Graphics;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBarBg: Phaser.GameObjects.Rectangle;
+  hpText: Phaser.GameObjects.Text;
+  spawnId: number;
   maxHp: number;
   currentHp: number;
 }
@@ -185,6 +202,7 @@ export class GameScene extends Phaser.Scene {
   private spawnVisuals: Map<number, SpawnVisual> = new Map();
   private coreVisuals: Map<number, CoreVisual> = new Map();
   private reflectorVisuals: Map<string, ReflectorVisual> = new Map();
+  private towerBoxVisuals: Map<number, TowerBoxVisual> = new Map();  // spawnId → visual
 
   private tilesLayer!: Phaser.GameObjects.Container;
   private ballsLayer!: Phaser.GameObjects.Container;
@@ -257,6 +275,7 @@ export class GameScene extends Phaser.Scene {
   private itemVisuals: Map<number, ItemVisual> = new Map();
   private _initMonsters: MonsterInfo[] = [];
   private _initWalls: WallPlacedMsg[] = [];
+  private _initTowerBoxes: TowerBoxInfo[] = [];
 
   constructor() {
     super({ key: 'GameScene' });
@@ -282,6 +301,7 @@ export class GameScene extends Phaser.Scene {
     this.myReflectorCooldownElapsed = 0;
     this._initMonsters = data.matchData.monsters ?? [];
     this._initWalls = data.matchData.walls ?? [];
+    this._initTowerBoxes = data.matchData.towerBoxes ?? [];
     this.layout = data.matchData.layout;
 
     const registry = createBattleTileRegistry();
@@ -305,7 +325,10 @@ export class GameScene extends Phaser.Scene {
     const worldH = this.mapData.height * TILE_SIZE;
     this.initialZoom = Math.min(width / worldW, height / worldH, 1.0);
     this.cameras.main.setBackgroundColor(BG_COLOR);
-    this.cameras.main.setBounds(0, 0, worldW, worldH);
+    // bounds를 최소줌 기준 반화면 크기만큼 확장 → 최소줌에서도 맵 어디든 화면 중앙에 올 수 있음
+    const halfVW = width / (2 * this.initialZoom);
+    const halfVH = height / (2 * this.initialZoom);
+    this.cameras.main.setBounds(-halfVW, -halfVH, worldW + halfVW * 2, worldH + halfVH * 2);
     this.cameras.main.setZoom(this.initialZoom);
     this.cameras.main.centerOn(worldW / 2, worldH / 2);
     this.cameras.main.ignore(this.uiLayer);
@@ -323,6 +346,7 @@ export class GameScene extends Phaser.Scene {
     this.coreVisuals.clear();
     this.reflectorVisuals.clear();
     this.wallVisuals.clear();
+    this.towerBoxVisuals.clear();
     this.hpTweens.clear();
     this.endingBalls.clear();
     this.ballMoveTweens.clear();
@@ -366,13 +390,16 @@ export class GameScene extends Phaser.Scene {
     for (const m of this._initMonsters) {
       this.drawMonster(m.id, m.monsterType, m.x, m.y, m.hp, m.maxHp);
     }
+    for (const box of this._initTowerBoxes) {
+      const sp = this.serverSpawnPoints.find(s => s.id === box.spawnId);
+      if (sp) this.createTowerBoxVisual(sp.x, sp.y, box.spawnId, box.hp, box.maxHp);
+    }
     this.createReflectorStockUI();
     this.updateReflectorStockUI(this.myReflectorStock, 0); // 초기 풀스톡 표시
     this.setupInput();
     this.setupUI();
     this.setupSocketEvents();
-    this.startSpawnGauge();
-    this.showCoreIntro();
+    this.showPreGameIntro();
   }
 
   // --- 씬 종료 시 정리 ---
@@ -421,9 +448,11 @@ export class GameScene extends Phaser.Scene {
     this.socket.onTowerBoxBroken = undefined;
     this.socket.onLobbyUpdate = undefined;
     this.socket.onPlayerEliminated = undefined;
+    this.socket.onOwnershipTransferred = undefined;
     this.remainingPlayersText = null;
     this.monsterVisuals.clear();
     this.itemVisuals.clear();
+    this.towerBoxVisuals.clear();
     this.reflectorSlotBgs = [];
     this.reflectorSlotFills = [];
     this.reflectorCooldownTween = null;
@@ -456,7 +485,7 @@ export class GameScene extends Phaser.Scene {
         if (tileIdx === 2 || tileIdx === 3 || tileIdx === 4 || tileIdx === 5) {
           const spInfo = this.serverSpawnPoints.find(sp => sp.x === x && sp.y === y);
           if (spInfo) {
-            this.createSpawnVisual(x, y, spInfo.ownerId, spInfo.id, spInfo.maxHp, tileIdx);
+            this.createSpawnVisual(x, y, spInfo.ownerId, spInfo.id, spInfo.maxHp, spInfo.direction);
           }
         }
 
@@ -741,7 +770,7 @@ export class GameScene extends Phaser.Scene {
   private createSpawnVisual(
     gridX: number, gridY: number,
     ownerId: number, spawnId: number, maxHp: number,
-    tileIdx: number,
+    direction: number,  // Direction enum: Up=1, Down=2, Left=3, Right=4
   ): void {
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
@@ -771,29 +800,29 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.tilesLayer.add(label);
 
-    // 발사 방향 화살표
+    // 발사 방향 화살표 (Direction enum 기준)
     const dirArrow = this.add.graphics();
     const arrowColor = this.getTeamColor(ownerId);
     dirArrow.fillStyle(arrowColor, 0.6);
 
     const arrowSize = 6;
-    if (tileIdx === 2) {
+    if (direction === Direction.Right) {
       // 오른쪽 화살표
       const ax = px + TILE_SIZE / 2 - 4;
       const ay = py;
       dirArrow.fillTriangle(ax, ay - arrowSize, ax, ay + arrowSize, ax + arrowSize, ay);
-    } else if (tileIdx === 3) {
+    } else if (direction === Direction.Left) {
       // 왼쪽 화살표
       const ax = px - TILE_SIZE / 2 + 4;
       const ay = py;
       dirArrow.fillTriangle(ax, ay - arrowSize, ax, ay + arrowSize, ax - arrowSize, ay);
-    } else if (tileIdx === 4) {
+    } else if (direction === Direction.Up) {
       // 위쪽 화살표
       const ax = px;
       const ay = py - TILE_SIZE / 2 + 4;
       dirArrow.fillTriangle(ax - arrowSize, ay, ax + arrowSize, ay, ax, ay - arrowSize);
     } else {
-      // 아래쪽 화살표 (tileIdx === 5)
+      // 아래쪽 화살표 (Direction.Down)
       const ax = px;
       const ay = py + TILE_SIZE / 2 - 4;
       dirArrow.fillTriangle(ax - arrowSize, ay, ax + arrowSize, ay, ax, ay + arrowSize);
@@ -860,7 +889,7 @@ export class GameScene extends Phaser.Scene {
 
     this.coreVisuals.set(coreId, {
       id: coreId,
-      bg, hpBar, hpBarBg, label,
+      bg, hpBar, hpBarBg, label, diamond,
       x: gridX, y: gridY,
       maxHp, currentHp: maxHp,
       ownerId,
@@ -868,37 +897,55 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private showCoreIntro(): void {
-    const myCore = Array.from(this.coreVisuals.values()).find(c => c.ownerId === this.myPlayerId);
-    if (!myCore) return;
-
-    const worldX = myCore.x * TILE_SIZE + TILE_SIZE / 2;
-    const worldY = myCore.y * TILE_SIZE + TILE_SIZE / 2;
-    const worldW = this.mapData.width * TILE_SIZE;
-    const worldH = this.mapData.height * TILE_SIZE;
-
+  /**
+   * 프리게임 카메라 연출:
+   *  0–2초: 전체 맵을 보여줌 (initialZoom, 맵 중앙)
+   *  2–3초: 내 존으로 포커싱 (pan + zoom, 1000ms)
+   *  3–4초: 1초 대기
+   *  4초~:  입력 활성화 + 스폰 게이지 시작 (서버 스폰 타이머와 동기)
+   */
+  private showPreGameIntro(): void {
     this.input.enabled = false;
-    this.cameras.main.pan(worldX, worldY, 700, 'Sine.easeInOut');
-    this.cameras.main.zoomTo(2.2, 700, 'Sine.easeInOut');
 
-    this.time.delayedCall(750, () => {
-      const label = this.add.text(worldX, worldY - TILE_SIZE, '내 코어', {
-        fontSize: '14px',
-        color: '#88ccff',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(300).setAlpha(0);
-      this.tilesLayer.add(label);
-      this.tweens.add({ targets: label, alpha: 1, duration: 200 });
+    // 카메라는 이미 initialZoom + 맵 중앙으로 설정되어 있음 (create에서)
 
-      this.time.delayedCall(1500, () => {
-        this.tweens.add({ targets: label, alpha: 0, duration: 400, onComplete: () => label.destroy() });
-        this.cameras.main.pan(worldW / 2, worldH / 2, 700, 'Sine.easeInOut');
-        this.cameras.main.zoomTo(this.initialZoom, 700, 'Sine.easeInOut');
-        this.time.delayedCall(700, () => { this.input.enabled = true; });
+    // Phase 1: 전체 맵 2초간 표시
+    this.time.delayedCall(2000, () => {
+      // Phase 2: 내 존으로 포커싱 (1초 애니메이션)
+      const { cx, cy } = this.getMyZoneCenter();
+      this.cameras.main.pan(cx, cy, 1000, 'Sine.easeInOut');
+      this.cameras.main.zoomTo(1.0, 1000, 'Sine.easeInOut');
+
+      // Phase 3: 포커싱 완료 후 1초 대기 → 게임 시작
+      this.time.delayedCall(1000 + 1000, () => {
+        this.input.enabled = true;
+        this.startSpawnGauge();
       });
     });
+  }
+
+  /** 내 존(또는 코어) 중심 월드 좌표 반환 */
+  private getMyZoneCenter(): { cx: number; cy: number } {
+    if (this.layout) {
+      const zone = this.layout.zones.find(z => z.playerId === this.myPlayerId);
+      if (zone) {
+        return {
+          cx: (zone.originX + zone.width / 2) * TILE_SIZE,
+          cy: (zone.originY + zone.height / 2) * TILE_SIZE,
+        };
+      }
+    }
+    const myCore = Array.from(this.coreVisuals.values()).find(c => c.ownerId === this.myPlayerId);
+    if (myCore) {
+      return {
+        cx: myCore.x * TILE_SIZE + TILE_SIZE / 2,
+        cy: myCore.y * TILE_SIZE + TILE_SIZE / 2,
+      };
+    }
+    return {
+      cx: (this.mapData.width * TILE_SIZE) / 2,
+      cy: (this.mapData.height * TILE_SIZE) / 2,
+    };
   }
 
   private showCoreHighlight(): void {
@@ -1153,6 +1200,27 @@ export class GameScene extends Phaser.Scene {
 
     // 클릭 처리 (드래그와 구분)
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      // 우클릭: 드래그 여부와 무관하게 항상 처리
+      // (rightButtonDown은 pointerup 시점엔 이미 false이므로 rightButtonReleased 사용)
+      if (pointer.rightButtonReleased()) {
+        this.isDragging = false;
+        if (this.wallMode) {
+          this.setWallMode(false);
+          return;
+        }
+        const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const gridX = Math.floor(worldPoint.x / TILE_SIZE);
+        const gridY = Math.floor(worldPoint.y / TILE_SIZE);
+        if (gridX >= 0 && gridX < width && gridY >= 0 && gridY < height) {
+          const key = `${gridX},${gridY}`;
+          const existing = this.reflectorVisuals.get(key);
+          if (existing && existing.playerId === this.myPlayerId) {
+            this.socket.removeReflector(gridX, gridY);
+          }
+        }
+        return;
+      }
+
       if (this.isDragging) {
         this.isDragging = false;
         return;
@@ -1165,25 +1233,13 @@ export class GameScene extends Phaser.Scene {
       const gridY = Math.floor(worldPoint.y / TILE_SIZE);
 
       if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) {
-        if (this.wallMode && !pointer.rightButtonDown()) this.setWallMode(false);
+        if (this.wallMode) this.setWallMode(false);
         return;
       }
 
       const tile = this.mapModel.getTile(gridX, gridY);
       const key = `${gridX},${gridY}`;
       const existing = this.reflectorVisuals.get(key);
-
-      // 우클릭: 내 반사판 즉시 제거 (성벽 모드 해제도)
-      if (pointer.rightButtonDown()) {
-        if (this.wallMode) {
-          this.setWallMode(false);
-          return;
-        }
-        if (existing && existing.playerId === this.myPlayerId) {
-          this.socket.removeReflector(gridX, gridY);
-        }
-        return;
-      }
 
       // 성벽 모드: 빈 설치 가능 타일에 성벽 설치
       if (this.wallMode) {
@@ -1395,13 +1451,13 @@ export class GameScene extends Phaser.Scene {
       if (this.wallMode) this.setWallMode(false);
     });
 
-    // 페이즈 카운터 (상단 게이지 바로 아래)
-    const phaseY = 28;
-    this.phaseText = this.add.text(width / 2, phaseY, '1', {
-      fontSize: '20px',
+    // 페이즈 카운터 (상단 게이지 왼쪽)
+    const phaseY = 7;
+    this.phaseText = this.add.text(8, phaseY, '1', {
+      fontSize: '14px',
       color: '#44ccff',
       fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(5).setAlpha(0.55);
+    }).setOrigin(0, 0).setDepth(5).setAlpha(0.7);
     this.uiLayer.add(this.phaseText);
 
     // 스폰 타이밍 게이지 (상단)
@@ -1752,12 +1808,95 @@ export class GameScene extends Phaser.Scene {
       this.updateReflectorCount();
     };
 
+    this.socket.onTowerBoxDamaged = (msg: TowerBoxDamagedMsg) => {
+      this.updateTowerBoxHp(msg.spawnId, msg.hp, msg.maxHp);
+    };
+
+    this.socket.onTowerBoxBroken = (msg: TowerBoxBrokenMsg) => {
+      this.removeTowerBoxVisual(msg.spawnId);
+    };
+
     this.socket.onPlayerEliminated = (msg) => {
       this.remainingPlayersText?.setText(`${msg.remainingPlayers}/${this.totalPlayerCount}명`);
       // 탈락 존 시각적 표시 (N인 모드, 자신 제외)
       if (this.layout && msg.playerId !== this.myPlayerId) {
         const zone = this.layout.zones.find(z => z.playerId === msg.playerId);
         if (zone) this.showEliminatedZoneOverlay(zone.originX, zone.originY, zone.width, zone.height);
+      }
+    };
+
+    this.socket.onOwnershipTransferred = (msg: OwnershipTransferredMsg) => {
+      // 코어 비주얼 소유권 이전 + 재활성화
+      const coreVisual = this.coreVisuals.get(msg.coreId);
+      if (coreVisual) {
+        this.tweens.killTweensOf(coreVisual.bg);
+        coreVisual.ownerId = msg.newOwnerId;
+        coreVisual.destroyed = false;
+        coreVisual.maxHp = msg.coreMaxHp;
+        coreVisual.currentHp = msg.coreHp;
+        coreVisual.bg.setFillStyle(this.getTeamColorDark(msg.newOwnerId), 0.7);
+        coreVisual.bg.setAlpha(1);
+        coreVisual.hpBar.setVisible(true);
+        coreVisual.hpBarBg.setVisible(true);
+        coreVisual.label.setText(toAbbreviatedString(msg.coreHp)).setColor('#ffff88');
+        // 다이아몬드 색상 업데이트
+        coreVisual.diamond.clear();
+        coreVisual.diamond.lineStyle(2, this.getTeamColor(msg.newOwnerId), 0.9);
+        const px = coreVisual.x * TILE_SIZE + TILE_SIZE / 2;
+        const py = coreVisual.y * TILE_SIZE + TILE_SIZE / 2;
+        const s = TILE_SIZE / 5;
+        coreVisual.diamond.strokePoints([
+          { x: px, y: py - s },
+          { x: px + s, y: py },
+          { x: px, y: py + s },
+          { x: px - s, y: py },
+        ], true);
+        // HP 바 풀로 복구
+        const baseX = coreVisual.x * TILE_SIZE + TILE_SIZE / 2;
+        animHpBar(this, coreVisual.hpBar, baseX, 1.0, `core_hp_${msg.coreId}`, this.hpTweens);
+        // 팝인 애니메이션
+        animSpawnRespawn(this, [coreVisual.bg, coreVisual.hpBar, coreVisual.hpBarBg, coreVisual.label, coreVisual.diamond]);
+      }
+
+      // 스폰 타워 소유권 이전
+      for (const st of msg.spawnTransfers) {
+        const spVisual = this.spawnVisuals.get(st.spawnId);
+        if (!spVisual) continue;
+
+        this.tweens.killTweensOf(spVisual.bg);
+        spVisual.ownerId = msg.newOwnerId;
+        spVisual.maxHp = st.maxHp;
+        spVisual.currentHp = st.hp;
+
+        // 서버 스폰 정보도 업데이트
+        const spInfo = this.serverSpawnPoints.find(sp => sp.id === st.spawnId);
+        if (spInfo) spInfo.ownerId = msg.newOwnerId;
+
+        if (st.active) {
+          // 카운트다운 정리
+          this.clearSpawnCountdown(spVisual);
+          spVisual.destroyed = false;
+          spVisual.bg.setFillStyle(this.getTeamColorDark(msg.newOwnerId), 0.4);
+          spVisual.bg.setAlpha(1);
+          spVisual.hpBar.setVisible(true);
+          spVisual.hpBarBg.setVisible(true);
+          spVisual.dirArrow.setVisible(true);
+          spVisual.label.setText(toAbbreviatedString(st.hp)).setColor('#ffffff');
+          // 방향 화살표 색상 업데이트
+          spVisual.dirArrow.clear();
+          this.redrawDirArrow(spVisual);
+          // HP 바 복구
+          const spBaseX = spVisual.x * TILE_SIZE + TILE_SIZE / 2;
+          animHpBar(this, spVisual.hpBar, spBaseX, st.hp / st.maxHp, `spawn_hp_${st.spawnId}`, this.hpTweens);
+          // 팝인 애니메이션
+          animSpawnRespawn(this, [spVisual.bg, spVisual.hpBar, spVisual.hpBarBg, spVisual.label, spVisual.dirArrow]);
+        }
+
+        // 적 보호 구역 업데이트
+        this.removeEnemyZoneForSpawn(st.spawnId);
+        if (msg.newOwnerId !== this.myPlayerId && spInfo) {
+          this.addEnemyZoneForSpawn(st.spawnId, spInfo.x, spInfo.y, msg.newOwnerId);
+        }
       }
     };
 
@@ -2086,6 +2225,30 @@ export class GameScene extends Phaser.Scene {
     return PLAYER_COLORS_DARK[playerId === this.myPlayerId ? 0 : 1];
   }
 
+  /** 스폰 비주얼의 방향 화살표를 현재 소유자 색상으로 다시 그림 */
+  private redrawDirArrow(visual: SpawnVisual): void {
+    const spInfo = this.serverSpawnPoints.find(sp => sp.id === visual.id);
+    if (!spInfo) return;
+    const arrowColor = this.getTeamColor(visual.ownerId);
+    visual.dirArrow.fillStyle(arrowColor, 0.6);
+    const px = visual.x * TILE_SIZE + TILE_SIZE / 2;
+    const py = visual.y * TILE_SIZE + TILE_SIZE / 2;
+    const arrowSize = 6;
+    if (spInfo.direction === Direction.Right) {
+      const ax = px + TILE_SIZE / 2 - 4;
+      visual.dirArrow.fillTriangle(ax, py - arrowSize, ax, py + arrowSize, ax + arrowSize, py);
+    } else if (spInfo.direction === Direction.Left) {
+      const ax = px - TILE_SIZE / 2 + 4;
+      visual.dirArrow.fillTriangle(ax, py - arrowSize, ax, py + arrowSize, ax - arrowSize, py);
+    } else if (spInfo.direction === Direction.Up) {
+      const ay = py - TILE_SIZE / 2 + 4;
+      visual.dirArrow.fillTriangle(px - arrowSize, ay, px + arrowSize, ay, px, ay - arrowSize);
+    } else {
+      const ay = py + TILE_SIZE / 2 - 4;
+      visual.dirArrow.fillTriangle(px - arrowSize, ay, px + arrowSize, ay, px, ay + arrowSize);
+    }
+  }
+
   private formatHp(n: number): string {
     return toAbbreviatedString(n);
   }
@@ -2168,6 +2331,105 @@ export class GameScene extends Phaser.Scene {
       },
     });
     this.wallVisuals.delete(key);
+  }
+
+  // === 타워 박스 비주얼 ===
+
+  private createTowerBoxVisual(gridX: number, gridY: number, spawnId: number, hp: number, maxHp: number): void {
+    const px = gridX * TILE_SIZE + TILE_SIZE / 2;
+    const py = gridY * TILE_SIZE + TILE_SIZE / 2;
+    const S = TILE_SIZE - 2;
+
+    // 크레이트 배경 (짙은 갈색)
+    const bg = this.add.rectangle(px, py, S, S, 0x7a4a1a, 0.92)
+      .setStrokeStyle(2, 0xcc8833, 1).setDepth(3);
+    this.tilesLayer.add(bg);
+
+    // X자 표시 (잠금 아이콘)
+    const crossA = this.add.graphics().setDepth(4);
+    crossA.lineStyle(3, 0xddaa44, 0.8);
+    crossA.beginPath();
+    crossA.moveTo(px - S * 0.3, py - S * 0.3);
+    crossA.lineTo(px + S * 0.3, py + S * 0.3);
+    crossA.strokePath();
+    this.tilesLayer.add(crossA);
+
+    const crossB = this.add.graphics().setDepth(4);
+    crossB.lineStyle(3, 0xddaa44, 0.8);
+    crossB.beginPath();
+    crossB.moveTo(px + S * 0.3, py - S * 0.3);
+    crossB.lineTo(px - S * 0.3, py + S * 0.3);
+    crossB.strokePath();
+    this.tilesLayer.add(crossB);
+
+    // HP 바
+    const hpBarBg = this.add.rectangle(px, py + S / 2 - HP_BAR_HEIGHT, S - 4, HP_BAR_HEIGHT, 0x333333)
+      .setOrigin(0.5).setDepth(4);
+    this.tilesLayer.add(hpBarBg);
+
+    const ratio = hp / maxHp;
+    const fullW = S - 4;
+    const hpBar = this.add.rectangle(
+      px - fullW / 2 * (1 - ratio),
+      py + S / 2 - HP_BAR_HEIGHT,
+      fullW * ratio, HP_BAR_HEIGHT, 0xffaa22,
+    ).setOrigin(0.5).setDepth(4);
+    this.tilesLayer.add(hpBar);
+
+    const hpText = this.add.text(px, py - S * 0.12, this.formatHp(hp), {
+      fontSize: '10px', color: '#ffffff', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(5);
+    this.tilesLayer.add(hpText);
+
+    this.towerBoxVisuals.set(spawnId, { bg, crossA, crossB, hpBar, hpBarBg, hpText, spawnId, maxHp, currentHp: hp });
+  }
+
+  private updateTowerBoxHp(spawnId: number, hp: number, maxHp: number): void {
+    const visual = this.towerBoxVisuals.get(spawnId);
+    if (!visual) return;
+
+    const damage = visual.currentHp - hp;
+    visual.currentHp = hp;
+
+    const ratio = hp / maxHp;
+    const S = TILE_SIZE - 2;
+    const fullW = S - 4;
+    visual.hpBar.setDisplaySize(fullW * ratio, HP_BAR_HEIGHT);
+
+    const sp = this.serverSpawnPoints.find(s => s.id === spawnId);
+    if (sp) {
+      const px = sp.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = sp.y * TILE_SIZE + TILE_SIZE / 2;
+      visual.hpBar.setX(px - fullW / 2 * (1 - ratio));
+      if (damage > 0) {
+        animDamagePopup(this, this.tilesLayer, px, py - S * 0.25, damage);
+      }
+    }
+    visual.hpText.setText(this.formatHp(hp));
+  }
+
+  private removeTowerBoxVisual(spawnId: number): void {
+    const visual = this.towerBoxVisuals.get(spawnId);
+    if (!visual) return;
+
+    this.tweens.add({
+      targets: [visual.bg, visual.crossA, visual.crossB, visual.hpBar, visual.hpBarBg, visual.hpText],
+      alpha: 0,
+      scaleX: 1.4,
+      scaleY: 1.4,
+      duration: 350,
+      ease: 'Sine.easeOut',
+      onComplete: () => {
+        visual.bg.destroy();
+        visual.crossA.destroy();
+        visual.crossB.destroy();
+        visual.hpBar.destroy();
+        visual.hpBarBg.destroy();
+        visual.hpText.destroy();
+      },
+    });
+    this.towerBoxVisuals.delete(spawnId);
   }
 
   private showTimeStop(duration: number): void {

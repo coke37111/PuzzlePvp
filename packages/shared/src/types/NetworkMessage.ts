@@ -83,6 +83,7 @@ export interface MatchFoundMsg {
   teamId?: number;
   teams?: TeamConfig[];
   layout?: MapLayoutConfig;
+  towerBoxes?: TowerBoxInfo[];
 }
 
 export interface MonsterSpawnedMsg {
@@ -287,6 +288,22 @@ export interface TowerBoxBrokenMsg {
   spawnId: number;
 }
 
+// ─── 소유권 이전 ─────────────────────────────────────────────────
+
+export interface OwnershipTransferredMsg {
+  oldOwnerId: number;
+  newOwnerId: number;
+  coreId: number;
+  coreHp: number;
+  coreMaxHp: number;
+  spawnTransfers: {
+    spawnId: number;
+    hp: number;
+    maxHp: number;
+    active: boolean;
+  }[];
+}
+
 // ─── 로비 ────────────────────────────────────────────────────────
 
 export interface LobbyUpdateMsg {
@@ -351,4 +368,5 @@ export const SocketEvent = {
   PLAYER_ELIMINATED: 'player_eliminated',
   TOWER_BOX_DAMAGED: 'tower_box_damaged',
   TOWER_BOX_BROKEN: 'tower_box_broken',
+  OWNERSHIP_TRANSFERRED: 'ownership_transferred',
 } as const;

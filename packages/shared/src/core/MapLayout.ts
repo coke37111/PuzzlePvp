@@ -31,8 +31,8 @@ export interface PlayerZone {
   zoneRow: number;    // 존 그리드 내 행 (0-indexed)
   originX: number;    // 월드 타일 좌표 기준 존 좌상단 X
   originY: number;    // 월드 타일 좌표 기준 존 좌상단 Y
-  width: number;      // 항상 11
-  height: number;     // 항상 11
+  width: number;      // 항상 9
+  height: number;     // 항상 9
   eliminated: boolean;
   isAI: boolean;
 }
@@ -94,8 +94,14 @@ export const TOWER_BOX_HP: Record<number, number> = {
   3: 1_000_000,
 };
 
-// ========== 존 경계 벽 HP 기본값 ==========
-export const ZONE_WALL_HP = 500;
+// ========== 존 경계 벽 HP 계산 (중앙 100, 가장자리 10M 계단식) ==========
+function calcZoneWallHp(pos: number, totalLen: number): number {
+  const center = (totalLen - 1) / 2;
+  const dist = Math.abs(pos - center);
+  const t = totalLen > 1 ? dist / center : 0;
+  const level = Math.min(5, Math.round(t * 5));
+  return Math.pow(10, 2 + level);  // 100, 1K, 10K, 100K, 1M, 10M
+}
 
 // ========== 배열 셔플 유틸 ==========
 function shuffleArray<T>(arr: T[]): void {
@@ -107,14 +113,14 @@ function shuffleArray<T>(arr: T[]): void {
 
 /**
  * N인 배틀 맵 생성
- * - 각 플레이어는 11×11 개인 존
+ * - 각 플레이어는 9×9 개인 존
  * - 존 사이 1타일 두께의 파괴 가능한 벽
- * - 각 존 중앙(5,5)에 코어, 코어 대각선 2칸에 4개 타워 (1개 활성, 3개 잠금)
+ * - 각 존 중앙(4,4)에 코어, 코어 대각선 2칸에 4개 타워 (1개 활성, 3개 잠금)
  * - 팀은 좌우로 분리 (왼쪽 열 = 팀0, 오른쪽 열 = 팀1)
  */
 export function generateNPlayerBattleMap(playerCount: number): GeneratedMap {
   const [cols, rows] = LAYOUT_TABLE[playerCount] ?? [2, 1];
-  const zoneSize = 11;
+  const zoneSize = 9;
   const wallThick = 1;
 
   const totalW = cols * zoneSize + (cols - 1) * wallThick;
@@ -135,12 +141,12 @@ export function generateNPlayerBattleMap(playerCount: number): GeneratedMap {
     { teamId: 1, playerIds: [] },
   ];
 
-  // 타워 위치 정의 (존 로컬 좌표, 코어 (5,5) 기준 대각선 2칸)
+  // 타워 위치 정의 (존 로컬 좌표, 코어 (4,4) 기준 대각선 2칸)
   const towerDefs = [
-    { lx: 4, ly: 3, dir: Direction.Up },     // 좌상 → 위로 발사
-    { lx: 6, ly: 3, dir: Direction.Right },  // 우상 → 오른쪽으로 발사
-    { lx: 6, ly: 7, dir: Direction.Down },   // 우하 → 아래로 발사
-    { lx: 4, ly: 7, dir: Direction.Left },   // 좌하 → 왼쪽으로 발사
+    { lx: 3, ly: 2, dir: Direction.Up },     // 좌상 → 위로 발사
+    { lx: 5, ly: 2, dir: Direction.Right },  // 우상 → 오른쪽으로 발사
+    { lx: 5, ly: 6, dir: Direction.Down },   // 우하 → 아래로 발사
+    { lx: 3, ly: 6, dir: Direction.Left },   // 좌하 → 왼쪽으로 발사
   ];
 
   let playerIdx = 0;
@@ -159,9 +165,9 @@ export function generateNPlayerBattleMap(playerCount: number): GeneratedMap {
         }
       }
 
-      // 코어 배치 (존 중앙 5,5)
-      const coreX = originX + 5;
-      const coreY = originY + 5;
+      // 코어 배치 (존 중앙 4,4)
+      const coreX = originX + 4;
+      const coreY = originY + 4;
       tiles[coreY][coreX] = TILE_CORE;
       coreAssignments.push({ x: coreX, y: coreY, ownerId: playerIdx });
 
@@ -207,25 +213,34 @@ export function generateNPlayerBattleMap(playerCount: number): GeneratedMap {
     }
   }
 
-  // 존 사이 수직 격벽 (열 사이, x = col*12 + 11)
+  // 존 사이 수직 격벽 (열 사이) — 구역 단위로 HP 패턴 반복
   for (let col = 0; col < cols - 1; col++) {
     const wx = col * (zoneSize + wallThick) + zoneSize;
     for (let y = 0; y < totalH; y++) {
       tiles[y][wx] = TILE_EMPTY;
-      zoneWalls.push({ x: wx, y, hp: ZONE_WALL_HP });
+      const segIdx = Math.floor(y / (zoneSize + wallThick));
+      const localY = y - segIdx * (zoneSize + wallThick);
+      const hp = localY < zoneSize
+        ? calcZoneWallHp(localY, zoneSize)
+        : calcZoneWallHp(0, zoneSize);  // 교차점: 최대 HP
+      zoneWalls.push({ x: wx, y, hp });
     }
   }
 
-  // 존 사이 수평 격벽 (행 사이, y = row*12 + 11)
+  // 존 사이 수평 격벽 (행 사이) — 구역 단위로 HP 패턴 반복
   for (let row = 0; row < rows - 1; row++) {
     const wy = row * (zoneSize + wallThick) + zoneSize;
     for (let x = 0; x < totalW; x++) {
       if (tiles[wy][x] === 0) {
         tiles[wy][x] = TILE_EMPTY;
       }
-      // 중복 방지 (수직벽과 교차 지점은 이미 있을 수 있음)
       if (!zoneWalls.some(w => w.x === x && w.y === wy)) {
-        zoneWalls.push({ x, y: wy, hp: ZONE_WALL_HP });
+        const segIdx = Math.floor(x / (zoneSize + wallThick));
+        const localX = x - segIdx * (zoneSize + wallThick);
+        const hp = localX < zoneSize
+          ? calcZoneWallHp(localX, zoneSize)
+          : calcZoneWallHp(0, zoneSize);  // 교차점: 최대 HP
+        zoneWalls.push({ x, y: wy, hp });
       }
     }
   }
