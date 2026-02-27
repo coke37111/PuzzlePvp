@@ -92,6 +92,11 @@ Classic1의 `Core/` 폴더에 해당. Unity 독립적인 순수 게임 로직.
 | coreHp | 15 |
 | maxReflectorsPerPlayer | 5 |
 | reflectorCooldown | 3.0초 |
+| wallCostGold | 100g |
+| swordCostGold | 10g |
+| shieldCostGold | 300g |
+| shieldDuration | 30초 |
+| initialBallPower | 3 |
 | 서버 틱 | 50ms (20 FPS) |
 | 맵 크기 | 13 x 9 |
 
@@ -152,10 +157,19 @@ npm run dev:server
 
 ```typescript
 export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
-  spawnInterval: 1.0,           // 자동 발사 주기 (초)
-  timePerPhase: 0.3,            // 공 이동 속도 (초/칸)
-  maxReflectorsPerPlayer: 5,    // 반사판 한도
-  spawnHp: 5,                   // 출발점 HP
+  spawnInterval: 5.0,           // 자동 발사 주기 (초)
+  timePerPhase: 0.2,            // 공 이동 속도 (초/칸)
+  maxReflectorsPerPlayer: 5,    // 반사판 보드 한도
+  reflectorCooldown: 3.0,       // 반사판 스톡 충전 주기 (초)
+  maxReflectorStock: 5,         // 반사판 최대 보유 수
+  initialReflectorStock: 3,     // 초기 보유 수
+  spawnHp: 7,                   // 출발점 HP
+  coreHp: 15,                   // 코어 HP
+  wallCostGold: 100,            // 성벽 설치 비용
+  swordCostGold: 10,            // 칼 사용 비용
+  shieldCostGold: 300,          // 쉴드 비용
+  shieldDuration: 30,           // 쉴드 지속 시간 (초)
+  initialBallPower: 3,          // 초기 공 공격력
 };
 ```
 

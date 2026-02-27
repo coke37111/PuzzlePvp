@@ -66,8 +66,11 @@ BattleSimulator (대전 시뮬레이터)
 ├── MonsterModel[] (몬스터 AI + 이동)
 ├── DroppedItemModel (아이템 드랍/픽업)
 ├── WallState (성벽 HP 관리)
+├── 골드 시스템 (Map<playerId, gold>, 킬/구조물 파괴 시 지급)
+├── 쉴드 시스템 (Map<targetId, ShieldState>, 타이머 기반 만료)
 ├── 자동 공 발사 (spawnInterval: 5.0초)
 ├── 반사판 스톡/쿨다운 시스템 (3초마다 1개 충전)
+├── 격벽(TowerBox) 시스템 — 코어 점령 시 인접 구역 잠금 해제
 ├── 적 스폰존 보호 (설치 금지 영역)
 ├── 성벽 위 반사판 설치 불가
 └── 승리 조건 판정 (모든 코어 파괴)
@@ -88,17 +91,17 @@ BattleSimulator (대전 시뮬레이터)
 - `join_queue` — 매칭 요청
 - `place_reflector` — 반사판 배치 (x, y, type)
 - `remove_reflector` — 반사판 제거 (x, y)
-- `use_item_wall` — 성벽 아이템 사용 (x, y)
-- `use_item_time_stop` — 시간 정지 아이템 사용
+- `place_wall` — 성벽 설치 (x, y) — 골드 100g 소모
+- `use_sword` — 칼 사용 (x, y) — 골드 10g 소모, 해당 위치 적 반사판 제거
+- `use_shield` — 쉴드 사용 (targetType, targetId) — 골드 300g 소모
 
 **서버 → 클라이언트**:
 - `match_found` — 매칭 성공 (roomId, playerId, mapData, spawnPoints, cores, monsters)
 - `ball_spawned` / `ball_moved` / `ball_ended` — 공 이벤트
 - `reflector_placed` / `reflector_removed` — 반사판 이벤트
-- `reflector_stock_changed` — 반사판 스톡 변경 (stock, cooldownElapsed)
-- `spawn_hp` / `spawn_destroyed` / `spawn_respawned` — 출발점 이벤트
-- `spawn_healed` — 출발점 HP 회복 팝업
-- `core_hp` / `core_healed` — 코어 HP 이벤트
+- `reflector_stock` — 반사판 스톡 변경 (stock, cooldownElapsed)
+- `spawn_hp` / `spawn_destroyed` / `spawn_respawned` / `spawn_healed` — 출발점 이벤트
+- `core_hp` / `core_healed` / `core_destroyed` — 코어 HP 이벤트
 - `monster_spawned` / `monster_moved` / `monster_damaged` / `monster_killed` — 몬스터 이벤트
 - `item_dropped` / `item_picked_up` — 아이템 드랍/픽업
 - `ball_powered_up` — 공 공격력 증가 (playerId, power)
@@ -106,7 +109,14 @@ BattleSimulator (대전 시뮬레이터)
 - `player_speed_up` — 공 속도 증가 (playerId, speedBonus)
 - `player_reflector_expand` — 반사판 한도 증가 (playerId, maxReflectors)
 - `wall_placed` / `wall_damaged` / `wall_destroyed` — 성벽 이벤트
-- `time_stop_started` / `time_stop_ended` — 시간 정지 이벤트
+- `gold_updated` — 골드 변경 (playerId, gold)
+- `sword_used` — 칼 사용 결과 (attackerId, x, y)
+- `shield_applied` — 쉴드 적용 (targetType, targetId, duration, ownerId)
+- `shield_expired` — 쉴드 만료 (targetType, targetId)
+- `tower_box_damaged` / `tower_box_broken` — 격벽 이벤트 (구역 잠금 해제)
+- `ownership_transferred` — 코어 점령 후 스폰 소유권 이전
+- `lobby_update` — 대기열 상태 갱신
+- `player_eliminated` — 플레이어 탈락
 - `game_over` — 게임 종료 (winnerId)
 
 ---
@@ -137,8 +147,16 @@ BattleSimulator (대전 시뮬레이터)
 - 50ms 틱 타이머 (20 FPS)
 - BattleSimulator 구동
 - 이벤트 콜백 → Socket.io 브로드캐스트
+- AIPlayer 인스턴스 관리 (AI 매칭 시 생성)
 - 플레이어 연결 끊김 → 상대 승리 처리
 - stop() 시 타이머 정리 + 모든 소켓 리스너 해제
+
+**AIPlayer** (`server/src/ai/AIPlayer.ts`) — AI 봇
+- 상태 머신 기반: IDLE / DEFENDING / ATTACKING / FARMING
+- 이벤트 기반 반응: `notify(event, data)` — ballMoved, coreHpChanged 등 10개 이벤트
+- 위협 추적: `activeThreats` — 코어/스폰 직진 위협 공 실시간 추적
+- 스코어링: 방어(scoreDefense) / 공격(scoreAttack) / 성장(scoreGrowth) 점수 기반 반사판 배치
+- 파밍 최적화: `planFarmLayout()` — 스폰 기준 전체 반사판 레이아웃 선제 계획 후 단계적 실행
 
 ---
 
@@ -177,15 +195,19 @@ MainMenuScene → MatchmakingScene → GameScene → ResultScene → MainMenuSce
 
 | 요소 | 설명 |
 |------|------|
-| 반사판 스톡 UI | 좌/우상단, 아이콘으로 현재 스톡 수 표시 + 쿨다운 게이지 |
+| 반사판 스톡 UI | 좌/우상단, 아이콘으로 현재 스톡 수 표시 + 쿨다운 게이지 (아래→위 채움) |
 | 출발점 HP 바 | 스폰 포인트 아래, HP 비율에 따라 색상 변경 |
 | 코어 HP 바 | 코어 타일 아래, HP 비율에 따라 색상 변경 |
 | 스폰존 오버레이 | 플레이어별 색상으로 반사판 설치 금지 영역 표시 |
 | 리스폰 카운트다운 | 파괴된 스폰 위에 남은 시간 표시 (20초 시작, +5초씩 증가) |
 | 데미지 팝업 | 피격 시 `-N` 텍스트 위로 떠오르며 페이드아웃 |
 | 힐 팝업 | HP 회복 시 `+N` 텍스트 |
+| 골드 표시 | 좌하단 아이템 슬롯 위, 현재 보유 골드 표시 |
+| 아이템 슬롯 | 좌하단 3개: 🧱 성벽(100g) / ⚔️ 칼(10g) / 🛡️ 쉴드(300g) — 골드 부족 시 반투명 |
+| 쉴드 시각 효과 | 보호막 적용 타일에 파란 맥동 오라 표시 (30초 후 사라짐) |
 | 볼륨 토글 버튼 | 좌상단, 사운드 on/off 전환 |
 | 코어 화살표 | 게임 시작 시 내 코어 위치 강조 애니메이션 |
+| 격벽(TowerBox) 오버레이 | 잠긴 구역 시각화 (HP 바 + 파괴 시 구역 오픈) |
 
 ### 렌더링 상수
 

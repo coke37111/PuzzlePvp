@@ -22,7 +22,10 @@ Classic1의 공+반사판 퍼즐 메카닉을 기반으로 한 **HTML5 1v1 실�
 | 코어 | 플레이어당 1개, 모든 코어 파괴 시 패배 |
 | 몬스터 | 보드 위를 돌아다니며 공에 맞으면 아이템 드랍 |
 | 아이템 | 4종: PowerUp(공격력↑) / BallCount(발사 수↑) / SpeedUp(속도↑) / ReflectorExpand(반사판 한도↑) |
-| 성벽 | 아이템으로 설치, HP 소진 시 파괴. 성벽 위에 반사판 설치 불가 |
+| 골드 | 적 처치/구조물 파괴 시 획득 (몬스터 +10, 스폰 +30, 코어 +300) |
+| 성벽 | 골드 100g으로 설치, HP 소진 시 파괴. 성벽 위 반사판 설치 불가. HP = 현재 공격력 × 100 |
+| 칼 | 골드 10g으로 적 반사판 1개 즉시 제거 |
+| 쉴드 | 골드 300g으로 내 타워/코어/성벽에 30초 보호막 부여. 피격 및 발사 차단 |
 | 승리 조건 | 상대의 모든 코어 HP=0 |
 
 ---
@@ -91,10 +94,11 @@ client/ (shared 의존)
 | `reflectorCooldown` | 3.0초 | 반사판 스톡 1개 충전 시간 |
 | `maxReflectorStock` | 5 | 반사판 최대 보유 수 |
 | `initialReflectorStock` | 3 | 게임 시작 초기 보유 수 |
-| `maxWallsPerPlayer` | 3 | 플레이어당 성벽 아이템 사용 횟수 |
-| `wallHp` | 10 | 성벽 HP |
-| `timeStopUsesPerPlayer` | 1 | 시간 정지 아이템 사용 횟수 |
-| `timeStopDuration` | 5초 | 시간 정지 지속 시간 |
+| `wallCostGold` | 100g | 성벽 설치 비용 (HP = 공격력 × 100) |
+| `swordCostGold` | 10g | 칼 사용 비용 (적 반사판 제거) |
+| `shieldCostGold` | 300g | 쉴드 비용 (타워/코어/성벽 보호) |
+| `shieldDuration` | 30초 | 쉴드 지속 시간 |
+| `initialBallPower` | 3 | 초기 공 공격력 |
 | 서버 틱 | 50ms (20 FPS) | 서버 시뮬레이션 주기 |
 
 ---
