@@ -17,8 +17,12 @@ import {
   WallPlacedMsg,
   WallDamagedMsg,
   WallDestroyedMsg,
-  TimeStopStartedMsg,
-  TimeStopEndedMsg,
+  UseSwordMsg,
+  UseShieldMsg,
+  GoldUpdatedMsg,
+  SwordUsedMsg,
+  ShieldAppliedMsg,
+  ShieldExpiredMsg,
   CoreHpMsg,
   CoreDestroyedMsg,
   SpawnRespawnedMsg,
@@ -65,8 +69,10 @@ export class SocketClient {
   onWallPlaced?: (msg: WallPlacedMsg) => void;
   onWallDamaged?: (msg: WallDamagedMsg) => void;
   onWallDestroyed?: (msg: WallDestroyedMsg) => void;
-  onTimeStopStarted?: (msg: TimeStopStartedMsg) => void;
-  onTimeStopEnded?: (msg: TimeStopEndedMsg) => void;
+  onGoldUpdated?: (msg: GoldUpdatedMsg) => void;
+  onSwordUsed?: (msg: SwordUsedMsg) => void;
+  onShieldApplied?: (msg: ShieldAppliedMsg) => void;
+  onShieldExpired?: (msg: ShieldExpiredMsg) => void;
   onCoreHp?: (msg: CoreHpMsg) => void;
   onCoreDestroyed?: (msg: CoreDestroyedMsg) => void;
   onSpawnPhaseComplete?: (msg: SpawnPhaseCompleteMsg) => void;
@@ -124,8 +130,10 @@ export class SocketClient {
     this.socket.on(SocketEvent.WALL_PLACED, (msg: WallPlacedMsg) => this.onWallPlaced?.(msg));
     this.socket.on(SocketEvent.WALL_DAMAGED, (msg: WallDamagedMsg) => this.onWallDamaged?.(msg));
     this.socket.on(SocketEvent.WALL_DESTROYED, (msg: WallDestroyedMsg) => this.onWallDestroyed?.(msg));
-    this.socket.on(SocketEvent.TIME_STOP_STARTED, (msg: TimeStopStartedMsg) => this.onTimeStopStarted?.(msg));
-    this.socket.on(SocketEvent.TIME_STOP_ENDED, (msg: TimeStopEndedMsg) => this.onTimeStopEnded?.(msg));
+    this.socket.on(SocketEvent.GOLD_UPDATED, (msg: GoldUpdatedMsg) => this.onGoldUpdated?.(msg));
+    this.socket.on(SocketEvent.SWORD_USED, (msg: SwordUsedMsg) => this.onSwordUsed?.(msg));
+    this.socket.on(SocketEvent.SHIELD_APPLIED, (msg: ShieldAppliedMsg) => this.onShieldApplied?.(msg));
+    this.socket.on(SocketEvent.SHIELD_EXPIRED, (msg: ShieldExpiredMsg) => this.onShieldExpired?.(msg));
     this.socket.on(SocketEvent.CORE_HP, (msg: CoreHpMsg) => this.onCoreHp?.(msg));
     this.socket.on(SocketEvent.CORE_DESTROYED, (msg: CoreDestroyedMsg) => this.onCoreDestroyed?.(msg));
     this.socket.on(SocketEvent.SPAWN_PHASE_COMPLETE, (msg: SpawnPhaseCompleteMsg) => this.onSpawnPhaseComplete?.(msg));
@@ -186,8 +194,14 @@ export class SocketClient {
     this.socket.emit(SocketEvent.PLACE_WALL, msg);
   }
 
-  useTimeStop(): void {
-    this.socket.emit(SocketEvent.USE_TIME_STOP);
+  useSword(x: number, y: number): void {
+    const msg: UseSwordMsg = { x, y };
+    this.socket.emit(SocketEvent.USE_SWORD, msg);
+  }
+
+  useShield(targetType: 'spawn' | 'core' | 'wall', targetId: string): void {
+    const msg: UseShieldMsg = { targetType, targetId };
+    this.socket.emit(SocketEvent.USE_SHIELD, msg);
   }
 
   setTargetPlayers(count: number): void {

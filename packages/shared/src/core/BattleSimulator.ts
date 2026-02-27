@@ -19,11 +19,6 @@ export interface WallState {
   ownerId: number;
 }
 
-export interface ItemCounts {
-  wall: number;
-  timeStop: number;
-}
-
 export interface WallEvent {
   x: number;
   y: number;
@@ -32,25 +27,20 @@ export interface WallEvent {
   maxHp?: number;
 }
 
-export interface TimeStopEvent {
-  playerId: number;
-  duration: number;
-}
-
 export interface BattleConfig {
-  spawnInterval: number;    // 초 단위 (기본 1.0)
-  timePerPhase: number;     // 초 단위 (기본 0.3, 클수록 느림)
-  maxReflectorsPerPlayer: number;  // 플레이어당 반사판 보드 한도 (기본 5)
-  reflectorCooldown: number;       // 반사판 1개 재생성 시간 (초, 기본 3.0)
-  maxReflectorStock: number;       // 반사판 최대 보유 수 (기본 5)
-  initialReflectorStock: number;   // 게임 시작 초기 보유 수 (기본 3)
-  spawnHp: number;          // SpawnPoint 기본 HP
-  coreHp: number;           // Core 기본 HP
-  maxWallsPerPlayer: number;       // 플레이어당 성벽 아이템 사용 횟수 (기본 3)
-  wallHp: number;           // 성벽 HP (기본 10)
-  timeStopUsesPerPlayer: number;   // 시간 정지 사용 횟수 (기본 1)
-  timeStopDuration: number; // 시간 정지 지속 시간 초 (기본 5)
-  initialBallPower: number; // 공 초기 공격력 (기본 3)
+  spawnInterval: number;
+  timePerPhase: number;
+  maxReflectorsPerPlayer: number;
+  reflectorCooldown: number;
+  maxReflectorStock: number;
+  initialReflectorStock: number;
+  spawnHp: number;
+  coreHp: number;
+  wallCostGold: number;
+  swordCostGold: number;
+  shieldCostGold: number;
+  shieldDuration: number;
+  initialBallPower: number;
 }
 
 export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
@@ -62,10 +52,10 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   initialReflectorStock: 3,
   spawnHp: 7,
   coreHp: 15,
-  maxWallsPerPlayer: 3,
-  wallHp: 10,
-  timeStopUsesPerPlayer: 1,
-  timeStopDuration: 5,
+  wallCostGold: 100,
+  swordCostGold: 10,
+  shieldCostGold: 300,
+  shieldDuration: 30,
   initialBallPower: 3,
 };
 
@@ -105,10 +95,9 @@ export class BattleSimulator {
   private isRunning: boolean = false;
 
   // 아이템
-  private itemCounts: Map<number, ItemCounts> = new Map();  // playerId → counts
   private walls: Map<string, WallState> = new Map();  // "x,y" → WallState
-  private isTimeStopped: boolean = false;
-  private timeStopRemaining: number = 0;
+  private playerGold: Map<number, number> = new Map();
+  private shields: Map<string, { targetType: 'spawn' | 'core' | 'wall'; remaining: number; ownerId: number }> = new Map();
 
   // 스폰 리스폰 타이머 (spawnId → 남은 초)
   private spawnRespawnTimers: Map<number, number> = new Map();
@@ -137,8 +126,10 @@ export class BattleSimulator {
   onWallPlaced?: (event: WallEvent & { playerId: number; maxHp: number }) => void;
   onWallDamaged?: (event: WallEvent) => void;
   onWallDestroyed?: (x: number, y: number) => void;
-  onTimeStopStarted?: (event: TimeStopEvent) => void;
-  onTimeStopEnded?: () => void;
+  onGoldUpdated?: (playerId: number, gold: number) => void;
+  onSwordUsed?: (attackerId: number, x: number, y: number) => void;
+  onShieldApplied?: (targetType: 'spawn' | 'core' | 'wall', targetId: string, duration: number, ownerId: number) => void;
+  onShieldExpired?: (targetType: 'spawn' | 'core' | 'wall', targetId: string) => void;
   onCoreHpChanged?: (event: CoreEvent) => void;
   onCoreDestroyed?: (coreId: number) => void;
   onSpawnPhaseComplete?: (phaseNumber: number) => void;
@@ -189,15 +180,10 @@ export class BattleSimulator {
     this.config = { ...DEFAULT_BATTLE_CONFIG, ...config };
     this.simulator = new BallSimulator(map);
 
-    // 반사판 큐, 아이템 초기화
+    // 반사판 큐 초기화
     for (const pid of this.playerIds) {
       this.reflectorQueues.set(pid, []);
-      this.itemCounts.set(pid, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
     }
-  }
-
-  getItemCounts(playerId: number): ItemCounts {
-    return this.itemCounts.get(playerId) ?? { wall: 0, timeStop: 0 };
   }
 
   getWall(x: number, y: number): WallState | undefined {
@@ -206,6 +192,10 @@ export class BattleSimulator {
 
   getWalls(): WallState[] {
     return Array.from(this.walls.values());
+  }
+
+  getPlayerGold(playerId: number): number {
+    return this.playerGold.get(playerId) ?? 0;
   }
 
   getTowerBoxes(): TowerBoxModel[] {
@@ -224,10 +214,6 @@ export class BattleSimulator {
 
   getDroppedItems(): DroppedItemModel[] {
     return Array.from(this.droppedItems.values()).filter(item => !item.pickedUp);
-  }
-
-  get isGameTimeStopped(): boolean {
-    return this.isTimeStopped;
   }
 
   init(): void {
@@ -261,12 +247,14 @@ export class BattleSimulator {
       this.playerBallCountBonus.set(pid, 0);
       this.playerSpeedMultiplier.set(pid, 1.0);
       this.playerReflectorBonus.set(pid, 0);
+      this.playerGold.set(pid, 0);
     }
     this.nextMonsterId = 1;
     this.droppedItems.clear();
     this.nextItemId = 1;
     this.towerBoxes.clear();
     this.capturedZones.clear();
+    this.shields.clear();
 
     // 항상 assignments 기반 초기화 (N:N 포함 2인도 동일 경로)
     const raw = this.map.rawData!;
@@ -349,9 +337,13 @@ export class BattleSimulator {
       const wallKey = `${tile.x},${tile.y}`;
       const wall = this.walls.get(wallKey);
       if (wall) {
+        if (this.shields.has(wallKey)) return true; // 방패 중 — 공 흡수
         wall.hp -= ball.power;
         if (wall.hp <= 0) {
           this.walls.delete(wallKey);
+          if (wall.ownerId === -1) {
+            this.addGold(ball.ownerId, 10);
+          }
           this.onWallDestroyed?.(tile.x, tile.y);
         } else {
           this.onWallDamaged?.({ x: tile.x, y: tile.y, hp: wall.hp });
@@ -388,6 +380,7 @@ export class BattleSimulator {
           this.onSpawnHealed?.({ spawnId: sp.id, hp: sp.hp, maxHp: sp.maxHp, ownerId: sp.ownerId });
         } else {
           // 적 공 → 데미지
+          if (this.shields.has(sp.id.toString())) return true; // 방패 중 — 공 흡수
           sp.damage(ball.power);
           if (!sp.active) {
             const count = (this.spawnDestroyCount.get(sp.id) ?? 0) + 1;
@@ -395,6 +388,7 @@ export class BattleSimulator {
             const respawnDelay = BattleSimulator.SPAWN_RESPAWN_BASE + (count - 1) * BattleSimulator.SPAWN_RESPAWN_INC;
             this.spawnRespawnTimers.set(sp.id, respawnDelay);
             this.onSpawnDestroyed?.(sp.id, respawnDelay);
+            this.addGold(ball.ownerId, 30);
             this.trimReflectorsForPlayer(sp.ownerId);
             // 파괴된 스폰의 발사 대기 큐 클리어 (이미 큐잉된 공이 계속 나오는 버그 방지)
             this.spawnQueues.set(sp.id, []);
@@ -413,9 +407,11 @@ export class BattleSimulator {
           this.onCoreHealed?.({ coreId: core.id, hp: core.hp, maxHp: core.maxHp, ownerId: core.ownerId });
         } else {
           // 적 공 → 데미지
+          if (this.shields.has(core.id.toString())) return true; // 방패 중 — 공 흡수
           core.damage(ball.power);
           this.onCoreHpChanged?.({ coreId: core.id, hp: core.hp, ownerId: core.ownerId });
           if (!core.active) {
+            this.addGold(ball.ownerId, 300);
             this.onCoreDestroyed?.(core.id);
             this.transferOwnership(core, ball.ownerId);
           }
@@ -467,8 +463,8 @@ export class BattleSimulator {
         if (!this.reflectorQueues.has(pid)) {
           this.reflectorQueues.set(pid, []);
         }
-        if (!this.itemCounts.has(pid)) {
-          this.itemCounts.set(pid, { wall: this.config.maxWallsPerPlayer, timeStop: this.config.timeStopUsesPerPlayer });
+        if (!this.playerGold.has(pid)) {
+          this.playerGold.set(pid, 0);
         }
         if (!this.reflectorStocks.has(pid)) {
           this.reflectorStocks.set(pid, this.config.initialReflectorStock);
@@ -525,14 +521,15 @@ export class BattleSimulator {
   update(delta: number): void {
     if (!this.isRunning) return;
 
-    // 시간 정지 처리
-    if (this.isTimeStopped) {
-      this.timeStopRemaining -= delta;
-      if (this.timeStopRemaining <= 0) {
-        this.isTimeStopped = false;
-        this.onTimeStopEnded?.();
-      }
-      return;
+    // 방패 타이머
+    const expiredShields: Array<[string, { targetType: 'spawn' | 'core' | 'wall'; remaining: number; ownerId: number }]> = [];
+    for (const [key, shield] of this.shields) {
+      shield.remaining -= delta;
+      if (shield.remaining <= 0) expiredShields.push([key, shield]);
+    }
+    for (const [key, shield] of expiredShields) {
+      this.shields.delete(key);
+      this.onShieldExpired?.(shield.targetType, key);
     }
 
     // 공 시뮬레이션 진행 (인스턴스 없어도 timer는 계속)
@@ -674,6 +671,7 @@ export class BattleSimulator {
     // 타워별 큐에 추가 (페이즈 경계마다 1발씩 순차 발사 → 겹침 방지)
     for (const sp of this.spawnPoints) {
       if (!sp.active) continue;
+      if (this.shields.has(sp.id.toString())) continue; // 방패 중인 타워는 발사 안 함
       const queue = this.spawnQueues.get(sp.id) ?? [];
       const ballCount = baseBallCount + (this.playerBallCountBonus.get(sp.ownerId) ?? 0);
       for (let i = 0; i < ballCount; i++) {
@@ -757,6 +755,14 @@ export class BattleSimulator {
     const spawnTransfers: { spawnId: number; hp: number; maxHp: number; active: boolean }[] = [];
     for (const sp of this.spawnPoints) {
       if (sp.ownerId === oldOwnerId) {
+        // 점령 보너스 골드: 활성화된 비잠금 스폰에 대해 지급
+        if (sp.active) {
+          const box = this.towerBoxes.get(sp.id);
+          const isLocked = box && !box.broken;
+          if (!isLocked) {
+            this.addGold(newOwnerId, 30);
+          }
+        }
         sp.ownerId = newOwnerId;
         // 파괴 대기 중인 스폰만 재활성화 (잠긴 타워는 박스가 파괴될 때까지 비활성 유지)
         if (!sp.active) {
@@ -767,6 +773,7 @@ export class BattleSimulator {
             sp.maxHp = this.config.spawnHp;
             sp.active = true;
             this.spawnRespawnTimers.delete(sp.id);
+            this.spawnQueues.set(sp.id, []);
           }
         }
         spawnTransfers.push({ spawnId: sp.id, hp: sp.hp, maxHp: sp.maxHp, active: sp.active });
@@ -1030,33 +1037,86 @@ export class BattleSimulator {
     return removed !== undefined;
   }
 
-  placeWall(playerId: number, x: number, y: number): boolean {
-    const counts = this.itemCounts.get(playerId)!;
-    if (counts.wall <= 0) return false;
+  private addGold(playerId: number, amount: number): void {
+    const current = this.playerGold.get(playerId) ?? 0;
+    const newAmount = current + amount;
+    this.playerGold.set(playerId, newAmount);
+    this.onGoldUpdated?.(playerId, newAmount);
+  }
 
-    // 빈 타일이어야 하고 반사판/스폰포인트가 없어야 함
+  placeWall(playerId: number, x: number, y: number): boolean {
+    const gold = this.playerGold.get(playerId) ?? 0;
+    if (gold < this.config.wallCostGold) return false;
+
     const tile = this.map.getTile(x, y);
     if (!tile || !tile.isReflectorSetable) return false;
     if (this.map.reflectors.has(x + y * 100)) return false;
     if (this.walls.has(`${x},${y}`)) return false;
     if (this.spawnPoints.some(s => s.tile.x === x && s.tile.y === y)) return false;
+    if (this.cores.some(c => c.tile.x === x && c.tile.y === y)) return false;
 
-    counts.wall -= 1;
-    const wall: WallState = { x, y, hp: this.config.wallHp, maxHp: this.config.wallHp, ownerId: playerId };
+    const power = this.playerBasePower.get(playerId) ?? this.config.initialBallPower;
+    const wallHp = power * 100;
+
+    this.playerGold.set(playerId, gold - this.config.wallCostGold);
+    this.onGoldUpdated?.(playerId, gold - this.config.wallCostGold);
+
+    const wall: WallState = { x, y, hp: wallHp, maxHp: wallHp, ownerId: playerId };
     this.walls.set(`${x},${y}`, wall);
     this.onWallPlaced?.({ x, y, hp: wall.hp, maxHp: wall.maxHp, playerId });
     return true;
   }
 
-  useTimeStop(playerId: number): boolean {
-    const counts = this.itemCounts.get(playerId)!;
-    if (counts.timeStop <= 0) return false;
-    if (this.isTimeStopped) return false;
+  useSword(playerId: number, x: number, y: number): boolean {
+    const gold = this.playerGold.get(playerId) ?? 0;
+    if (gold < this.config.swordCostGold) return false;
 
-    counts.timeStop -= 1;
-    this.isTimeStopped = true;
-    this.timeStopRemaining = this.config.timeStopDuration;
-    this.onTimeStopStarted?.({ playerId, duration: this.config.timeStopDuration });
+    const tileIndex = x + y * 100;
+    const reflector = this.map.reflectors.get(tileIndex);
+    if (!reflector) return false;
+    if (reflector.playerId === playerId) return false;
+
+    this.map.reflectors.delete(tileIndex);
+
+    const queue = this.reflectorQueues.get(reflector.playerId);
+    if (queue) {
+      const idx = queue.indexOf(tileIndex);
+      if (idx !== -1) queue.splice(idx, 1);
+    }
+
+    const targetStock = this.reflectorStocks.get(reflector.playerId) ?? 0;
+    const newStock = Math.min(targetStock + 1, this.config.maxReflectorStock);
+    this.reflectorStocks.set(reflector.playerId, newStock);
+    this.onReflectorStockChanged?.(reflector.playerId, newStock, this.reflectorCooldownTimers.get(reflector.playerId) ?? 0);
+
+    this.playerGold.set(playerId, gold - this.config.swordCostGold);
+    this.onGoldUpdated?.(playerId, gold - this.config.swordCostGold);
+    this.onReflectorRemoved?.(x, y, reflector.playerId);
+    this.onSwordUsed?.(playerId, x, y);
+    return true;
+  }
+
+  useShield(playerId: number, targetType: 'spawn' | 'core' | 'wall', targetId: string): boolean {
+    const gold = this.playerGold.get(playerId) ?? 0;
+    if (gold < this.config.shieldCostGold) return false;
+
+    if (targetType === 'spawn') {
+      const sp = this.spawnPoints.find(s => s.id === parseInt(targetId));
+      if (!sp || sp.ownerId !== playerId || !sp.active) return false;
+    } else if (targetType === 'core') {
+      const core = this.cores.find(c => c.id === parseInt(targetId));
+      if (!core || core.ownerId !== playerId || !core.active) return false;
+    } else if (targetType === 'wall') {
+      const wall = this.walls.get(targetId);
+      if (!wall || wall.ownerId !== playerId) return false;
+    }
+
+    if (this.shields.has(targetId)) return false;
+
+    this.playerGold.set(playerId, gold - this.config.shieldCostGold);
+    this.onGoldUpdated?.(playerId, gold - this.config.shieldCostGold);
+    this.shields.set(targetId, { targetType, remaining: this.config.shieldDuration, ownerId: playerId });
+    this.onShieldApplied?.(targetType, targetId, this.config.shieldDuration, playerId);
     return true;
   }
 

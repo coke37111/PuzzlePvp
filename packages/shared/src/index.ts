@@ -9,7 +9,7 @@ export { ItemType } from './enums/ItemType';
 export type { TileData } from './core/TileData';
 export type { MapData, ReflectorPlacement } from './core/MapModel';
 export type { SimulationSummary, BallArrivedAtTileCallback } from './core/BallSimulator';
-export type { BattleConfig, SpawnEvent, BattleResult, WallState, ItemCounts, WallEvent, TimeStopEvent, CoreEvent } from './core/BattleSimulator';
+export type { BattleConfig, SpawnEvent, BattleResult, WallState, WallEvent, CoreEvent } from './core/BattleSimulator';
 
 // Core - values
 export { createTileData, EMPTY_TILE_INDEX } from './core/TileData';
@@ -34,12 +34,12 @@ export type {
 // Types
 export type {
   JoinQueueMsg, PlaceReflectorMsg, RemoveReflectorMsg,
-  PlaceWallMsg, UseTimeStopMsg,
+  PlaceWallMsg, UseSwordMsg, UseShieldMsg,
   SpawnPointInfo, CoreInfo, MonsterInfo, MatchFoundMsg, SpawnHpMsg, SpawnDestroyedMsg, SpawnRespawnedMsg,
   ReflectorPlacedMsg, ReflectorRemovedMsg,
   BallSpawnedMsg, BallMovedMsg, BallEndedMsg, GameOverMsg,
   WallPlacedMsg, WallDamagedMsg, WallDestroyedMsg,
-  TimeStopStartedMsg, TimeStopEndedMsg,
+  GoldUpdatedMsg, SwordUsedMsg, ShieldAppliedMsg, ShieldExpiredMsg,
   CoreHpMsg, CoreDestroyedMsg,
   SpawnPhaseCompleteMsg,
   ReflectorStockMsg,

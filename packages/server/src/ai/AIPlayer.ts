@@ -113,10 +113,6 @@ export class AIPlayer {
         if (playerId === this.playerId) this.onStockChangedHandler(stock);
         break;
       }
-      case 'timeStopEnded':
-        this.rescanThreats();
-        this.evaluateStateTransition();
-        break;
       case 'ownershipTransferred':
         this.refreshCaches();
         this.evaluateStateTransition();

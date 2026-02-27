@@ -92,17 +92,19 @@ export const POPUP_ANIM_CLOSE = 100;
 
 // === 게임 규칙 ===
 export const MAX_REFLECTORS_PER_PLAYER = 5;
-export const INITIAL_WALL_COUNT = 3;
-export const INITIAL_TIME_STOP_COUNT = 1;
 
 // === 성벽 ===
 export const WALL_COLOR = 0x886633;
 export const WALL_BORDER_COLOR = 0xddaa44;
 
-// === 시간 정지 오버레이 ===
-export const TIME_STOP_OVERLAY_ALPHA = 0.5;
-export const TIME_STOP_GAUGE_COLOR = 0x8844ff;
-export const TIME_STOP_DURATION = 5;
+// === 아이템 골드 비용 ===
+export const ITEM_COST_WALL = 100;
+export const ITEM_COST_SWORD = 10;
+export const ITEM_COST_SHIELD = 300;
+
+// === 쉴드 시각 ===
+export const SHIELD_COLOR = 0x4488ff;
+export const SHIELD_ALPHA = 0.35;
 
 // === 스폰 타이밍 게이지 ===
 export const SPAWN_GAUGE_HEIGHT = 5;

@@ -32,7 +32,10 @@ import {
   WallPlacedMsg,
   WallDamagedMsg,
   WallDestroyedMsg,
-  TimeStopStartedMsg,
+  GoldUpdatedMsg,
+  SwordUsedMsg,
+  ShieldAppliedMsg,
+  ShieldExpiredMsg,
   CoreHpMsg,
   CoreDestroyedMsg,
   SpawnPhaseCompleteMsg,
@@ -62,9 +65,9 @@ import {
   GLOW_RADIUS_EXTRA, GLOW_ALPHA,
   ENEMY_ZONE_ALPHA,
   MAX_REFLECTORS_PER_PLAYER,
-  INITIAL_WALL_COUNT, INITIAL_TIME_STOP_COUNT,
   WALL_COLOR, WALL_BORDER_COLOR,
-  TIME_STOP_OVERLAY_ALPHA, TIME_STOP_GAUGE_COLOR, TIME_STOP_DURATION,
+  ITEM_COST_WALL, ITEM_COST_SWORD, ITEM_COST_SHIELD,
+  SHIELD_COLOR, SHIELD_ALPHA,
   SPAWN_GAUGE_HEIGHT, SPAWN_GAUGE_COLOR,
 } from '../visual/Constants';
 import { drawGridLines } from '../visual/GridRenderer';
@@ -159,6 +162,7 @@ interface WallVisual {
   y: number;
   maxHp: number;
   currentHp: number;
+  ownerId: number;
 }
 
 interface TowerBoxVisual {
@@ -210,32 +214,26 @@ export class GameScene extends Phaser.Scene {
 
   private reflectorCountTexts: [Phaser.GameObjects.Text | null, Phaser.GameObjects.Text | null] = [null, null];
 
-  // 아이템 UI
-  private itemUiTexts: { wall: [Phaser.GameObjects.Text | null, Phaser.GameObjects.Text | null], timeStop: [Phaser.GameObjects.Text | null, Phaser.GameObjects.Text | null] } = {
-    wall: [null, null], timeStop: [null, null],
-  };
-  private itemCounts: { wall: [number, number], timeStop: [number, number] } = {
-    wall: [INITIAL_WALL_COUNT, INITIAL_WALL_COUNT],
-    timeStop: [INITIAL_TIME_STOP_COUNT, INITIAL_TIME_STOP_COUNT],
-  };
+  // 골드 및 아이템 UI
+  private myGold: number = 0;
+  private goldText: Phaser.GameObjects.Text | null = null;
   private wallMode: boolean = false;
+  private swordMode: boolean = false;
+  private shieldMode: boolean = false;
   private wallModeText: Phaser.GameObjects.Text | null = null;
+  private swordModeText: Phaser.GameObjects.Text | null = null;
+  private shieldModeText: Phaser.GameObjects.Text | null = null;
   private wallCursor: Phaser.GameObjects.Rectangle | null = null;
   private wallVisuals: Map<string, WallVisual> = new Map();
+  private shieldVisuals: Map<string, Phaser.GameObjects.Rectangle> = new Map();
 
   // 아이템 슬롯 버튼 (터치 가능)
   private itemSlotWallBg: Phaser.GameObjects.Rectangle | null = null;
   private itemSlotWallText: Phaser.GameObjects.Text | null = null;
-  private itemSlotTsBg: Phaser.GameObjects.Rectangle | null = null;
-  private itemSlotTsText: Phaser.GameObjects.Text | null = null;
-
-  // 시간 정지 오버레이
-  private timeStopOverlay: Phaser.GameObjects.Rectangle | null = null;
-  private timeStopLabel: Phaser.GameObjects.Text | null = null;
-  private timeStopGaugeBg: Phaser.GameObjects.Rectangle | null = null;
-  private timeStopGauge: Phaser.GameObjects.Rectangle | null = null;
-  private timeStopRemaining: number = 0;
-  private timeStopTotal: number = TIME_STOP_DURATION;
+  private itemSlotSwordBg: Phaser.GameObjects.Rectangle | null = null;
+  private itemSlotSwordText: Phaser.GameObjects.Text | null = null;
+  private itemSlotShieldBg: Phaser.GameObjects.Rectangle | null = null;
+  private itemSlotShieldText: Phaser.GameObjects.Text | null = null;
 
   // 스폰 타이밍 게이지
   private spawnInterval: number = 5.0;
@@ -362,25 +360,27 @@ export class GameScene extends Phaser.Scene {
     this.capturedZones.clear();
     this.hoverHighlight = null;
     this.wallMode = false;
+    this.swordMode = false;
+    this.shieldMode = false;
     this.wallModeText = null;
+    this.swordModeText = null;
+    this.shieldModeText = null;
     this.wallCursor = null;
-    this.timeStopOverlay = null;
-    this.timeStopLabel = null;
-    this.timeStopGaugeBg = null;
-    this.timeStopGauge = null;
-    this.timeStopRemaining = 0;
+    this.myGold = 0;
+    this.goldText = null;
+    this.shieldVisuals.clear();
     this.spawnGaugeBg = null;
     this.spawnGaugeFill = null;
     this.spawnGaugeFiring = false;
     this.phaseCount = 0;
     this.phaseText = null;
-    this.itemCounts = { wall: [INITIAL_WALL_COUNT, INITIAL_WALL_COUNT], timeStop: [INITIAL_TIME_STOP_COUNT, INITIAL_TIME_STOP_COUNT] };
-    this.itemUiTexts = { wall: [null, null], timeStop: [null, null] };
     this.reflectorCountTexts = [null, null];
     this.itemSlotWallBg = null;
     this.itemSlotWallText = null;
-    this.itemSlotTsBg = null;
-    this.itemSlotTsText = null;
+    this.itemSlotSwordBg = null;
+    this.itemSlotSwordText = null;
+    this.itemSlotShieldBg = null;
+    this.itemSlotShieldText = null;
     this.muteBtnBg = null;
     this.muteBtnText = null;
 
@@ -392,7 +392,7 @@ export class GameScene extends Phaser.Scene {
     this.drawGrid();
     this.showCoreHighlight();
     for (const w of this._initWalls) {
-      this.drawWall(w.x, w.y, w.hp, w.maxHp);
+      this.drawWall(w.x, w.y, w.hp, w.maxHp, w.playerId);
     }
     this.rebuildInaccessibleZoneOverlays();
     for (const m of this._initMonsters) {
@@ -434,8 +434,10 @@ export class GameScene extends Phaser.Scene {
     this.socket.onWallPlaced = undefined;
     this.socket.onWallDamaged = undefined;
     this.socket.onWallDestroyed = undefined;
-    this.socket.onTimeStopStarted = undefined;
-    this.socket.onTimeStopEnded = undefined;
+    this.socket.onGoldUpdated = undefined;
+    this.socket.onSwordUsed = undefined;
+    this.socket.onShieldApplied = undefined;
+    this.socket.onShieldExpired = undefined;
     this.socket.onCoreHp = undefined;
     this.socket.onCoreDestroyed = undefined;
     this.socket.onSpawnPhaseComplete = undefined;
@@ -1177,9 +1179,10 @@ export class GameScene extends Phaser.Scene {
   private setupInput(): void {
     const { width, height } = this.mapData;
 
-    // 키보드: 1=성벽모드, 2=시간정지
+    // 키보드: 1=성벽모드, 2=칼모드, 3=쉴드모드
     this.input.keyboard?.on('keydown-ONE', () => this.toggleWallMode());
-    this.input.keyboard?.on('keydown-TWO', () => this.useTimeStop());
+    this.input.keyboard?.on('keydown-TWO', () => this.toggleSwordMode());
+    this.input.keyboard?.on('keydown-THREE', () => this.toggleShieldMode());
 
     // 마우스 휠: 줌
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _gameObjects: unknown, _deltaX: number, deltaY: number) => {
@@ -1275,10 +1278,9 @@ export class GameScene extends Phaser.Scene {
       // (rightButtonDown은 pointerup 시점엔 이미 false이므로 rightButtonReleased 사용)
       if (pointer.rightButtonReleased()) {
         this.isDragging = false;
-        if (this.wallMode) {
-          this.setWallMode(false);
-          return;
-        }
+        if (this.wallMode) { this.setWallMode(false); return; }
+        if (this.swordMode) { this.setSwordMode(false); return; }
+        if (this.shieldMode) { this.setShieldMode(false); return; }
         const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
         const gridX = Math.floor(worldPoint.x / TILE_SIZE);
         const gridY = Math.floor(worldPoint.y / TILE_SIZE);
@@ -1305,12 +1307,50 @@ export class GameScene extends Phaser.Scene {
 
       if (gridX < 0 || gridX >= width || gridY < 0 || gridY >= height) {
         if (this.wallMode) this.setWallMode(false);
+        if (this.swordMode) this.setSwordMode(false);
+        if (this.shieldMode) this.setShieldMode(false);
         return;
       }
 
       const tile = this.mapModel.getTile(gridX, gridY);
       const key = `${gridX},${gridY}`;
       const existing = this.reflectorVisuals.get(key);
+
+      // 칼 모드: 적 반사판 클릭 시 useSword
+      if (this.swordMode) {
+        const visual = this.reflectorVisuals.get(key);
+        if (visual && visual.playerId !== this.myPlayerId) {
+          this.socket.useSword(gridX, gridY);
+          this.setSwordMode(false);
+        } else {
+          this.showToast('적 반사판을 클릭하세요.');
+        }
+        return;
+      }
+
+      // 쉴드 모드: 내 타워/코어/방어벽 클릭 시 useShield
+      if (this.shieldMode) {
+        const spawn = this.serverSpawnPoints.find(sp => sp.x === gridX && sp.y === gridY && sp.ownerId === this.myPlayerId);
+        if (spawn) {
+          this.socket.useShield('spawn', String(spawn.id));
+          this.setShieldMode(false);
+          return;
+        }
+        const core = this.serverCores.find(c => c.x === gridX && c.y === gridY && c.ownerId === this.myPlayerId);
+        if (core) {
+          this.socket.useShield('core', String(core.id));
+          this.setShieldMode(false);
+          return;
+        }
+        const wallVisual = this.wallVisuals.get(key);
+        if (wallVisual && wallVisual.ownerId === this.myPlayerId) {
+          this.socket.useShield('wall', key);
+          this.setShieldMode(false);
+          return;
+        }
+        this.showToast('내 타워, 코어, 또는 방어벽을 클릭하세요.');
+        return;
+      }
 
       // 성벽 모드: 빈 설치 가능 타일에 성벽 설치
       if (this.wallMode) {
@@ -1352,9 +1392,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setWallMode(active: boolean): void {
-    if (active && this.itemCounts.wall[this.myPlayerId] <= 0) {
-      this.showToast('성벽 아이템이 없습니다.');
+    if (active && this.myGold < ITEM_COST_WALL) {
+      this.showToast(`골드가 부족합니다. (${ITEM_COST_WALL}g 필요)`);
       return;
+    }
+    if (active) {
+      this.setSwordMode(false);
+      this.setShieldMode(false);
     }
     this.wallMode = active;
     if (this.wallModeText) {
@@ -1368,20 +1412,52 @@ export class GameScene extends Phaser.Scene {
     this.itemSlotWallBg?.setStrokeStyle(2, active ? 0xffcc44 : 0x886633);
   }
 
-  private useTimeStop(): void {
-    if (this.itemCounts.timeStop[this.myPlayerId] <= 0) {
-      this.showToast('시간 정지 아이템이 없습니다.');
+  private toggleSwordMode(): void {
+    if (this.swordMode) {
+      this.setSwordMode(false);
+    } else {
+      this.setWallMode(false);
+      this.setShieldMode(false);
+      this.setSwordMode(true);
+    }
+  }
+
+  private setSwordMode(active: boolean): void {
+    if (active && this.myGold < ITEM_COST_SWORD) {
+      this.showToast(`골드가 부족합니다. (${ITEM_COST_SWORD}g 필요)`);
       return;
     }
-    this.socket.useTimeStop();
+    this.swordMode = active;
+    this.swordModeText?.setVisible(active);
+    this.itemSlotSwordBg?.setFillStyle(active ? 0x334488 : 0x111122);
+    this.itemSlotSwordBg?.setStrokeStyle(2, active ? 0x88aaff : 0x4466aa);
+  }
+
+  private toggleShieldMode(): void {
+    if (this.shieldMode) {
+      this.setShieldMode(false);
+    } else {
+      this.setWallMode(false);
+      this.setSwordMode(false);
+      this.setShieldMode(true);
+    }
+  }
+
+  private setShieldMode(active: boolean): void {
+    if (active && this.myGold < ITEM_COST_SHIELD) {
+      this.showToast(`골드가 부족합니다. (${ITEM_COST_SHIELD}g 필요)`);
+      return;
+    }
+    this.shieldMode = active;
+    this.shieldModeText?.setVisible(active);
+    this.itemSlotShieldBg?.setFillStyle(active ? 0x223366 : 0x112233);
+    this.itemSlotShieldBg?.setStrokeStyle(2, active ? 0x66aaff : 0x2255aa);
   }
 
   // === UI ===
 
   private setupUI(): void {
     const { width, height } = this.scale;
-    const opponentId = 1 - this.myPlayerId;
-
     // 상단 중앙: 남은 유저 수 (N인 모드에서 유용)
     const remText = this.add.text(width / 2, 4, `${this.totalPlayerCount}/${this.totalPlayerCount}명`, {
       fontSize: '15px', color: '#ffffff', fontStyle: 'bold',
@@ -1413,46 +1489,75 @@ export class GameScene extends Phaser.Scene {
       this.muteBtnBg!.setStrokeStyle(1, this.sfx.muted ? 0x444444 : 0x448844);
     });
 
-    // 내 아이템 슬롯 버튼 (좌하단, 터치 가능)
+    // 내 아이템 슬롯 버튼 (좌하단, 터치 가능) — 3개 슬롯: 성벽/칼/쉴드
     const SLOT = 56;
-    const wallCX = 8 + SLOT / 2;
-    const tsCX = wallCX + SLOT + 8;
-    const slotCY = height - 8 - SLOT / 2;
+    const GAP = 8;
+    const baseX = 8 + SLOT / 2;
+    const slotY = height - 8 - SLOT / 2;
+    const goldY = slotY - SLOT / 2 - 18;
 
-    this.itemSlotWallBg = this.add.rectangle(wallCX, slotCY, SLOT, SLOT, 0x332211)
+    // 골드 표시 (슬롯 위)
+    this.goldText = this.add.text(baseX, goldY, '💰 0', {
+      fontSize: '13px', color: '#FFD700', fontFamily: 'monospace',
+    }).setOrigin(0, 0.5).setDepth(10);
+    this.uiLayer.add(this.goldText);
+
+    // 슬롯 1: 성벽 (🧱)
+    const wallCX = baseX;
+    this.itemSlotWallBg = this.add.rectangle(wallCX, slotY, SLOT, SLOT, 0x332211)
       .setStrokeStyle(2, 0x886633)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    const wallEmoji = this.add.text(wallCX, slotCY - 7, '🧱', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
-    const wallKeyLabel = this.add.text(wallCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '1', {
-      fontSize: '11px', color: '#ffcc44', fontStyle: 'bold',
-    }).setOrigin(0, 0).setDepth(12);
-    this.itemSlotWallText = this.add.text(wallCX, slotCY + 18, `x${INITIAL_WALL_COUNT}`, {
-      fontSize: '13px', color: '#ddaa44', fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(11);
+    const wallEmoji = this.add.text(wallCX, slotY - 8, '🧱', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const wallKeyLabel = this.add.text(wallCX - SLOT / 2 + 4, slotY - SLOT / 2 + 4, '1', {
+      fontSize: '10px', color: '#aaaaaa',
+    }).setDepth(10);
+    this.itemSlotWallText = this.add.text(wallCX, slotY + 18, `${ITEM_COST_WALL}g`, {
+      fontSize: '11px', color: '#ccaa44', fontFamily: 'monospace',
+    }).setOrigin(0.5).setDepth(10);
     this.uiLayer.add([this.itemSlotWallBg, wallEmoji, wallKeyLabel, this.itemSlotWallText]);
     this.itemSlotWallBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e.stopPropagation();
       this.toggleWallMode();
     });
 
-    this.itemSlotTsBg = this.add.rectangle(tsCX, slotCY, SLOT, SLOT, 0x220033)
-      .setStrokeStyle(2, 0x8844ff)
+    // 슬롯 2: 칼 (⚔️)
+    const swordCX = baseX + SLOT + GAP;
+    this.itemSlotSwordBg = this.add.rectangle(swordCX, slotY, SLOT, SLOT, 0x111122)
+      .setStrokeStyle(2, 0x4466aa)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    const tsEmoji = this.add.text(tsCX, slotCY - 7, '⏸', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
-    const tsKeyLabel = this.add.text(tsCX - SLOT / 2 + 4, slotCY - SLOT / 2 + 4, '2', {
-      fontSize: '11px', color: '#aa88ff', fontStyle: 'bold',
-    }).setOrigin(0, 0).setDepth(12);
-    this.itemSlotTsText = this.add.text(tsCX, slotCY + 18, `x${INITIAL_TIME_STOP_COUNT}`, {
-      fontSize: '13px', color: '#aa88ff', fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(11);
-    this.uiLayer.add([this.itemSlotTsBg, tsEmoji, tsKeyLabel, this.itemSlotTsText]);
-    this.itemSlotTsBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+    const swordEmoji = this.add.text(swordCX, slotY - 8, '⚔️', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const swordKeyLabel = this.add.text(swordCX - SLOT / 2 + 4, slotY - SLOT / 2 + 4, '2', {
+      fontSize: '10px', color: '#aaaaaa',
+    }).setDepth(10);
+    this.itemSlotSwordText = this.add.text(swordCX, slotY + 18, `${ITEM_COST_SWORD}g`, {
+      fontSize: '11px', color: '#4488cc', fontFamily: 'monospace',
+    }).setOrigin(0.5).setDepth(10);
+    this.uiLayer.add([this.itemSlotSwordBg, swordEmoji, swordKeyLabel, this.itemSlotSwordText]);
+    this.itemSlotSwordBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e.stopPropagation();
-      this.useTimeStop();
+      this.toggleSwordMode();
     });
 
+    // 슬롯 3: 쉴드 (🛡️)
+    const shieldCX = baseX + (SLOT + GAP) * 2;
+    this.itemSlotShieldBg = this.add.rectangle(shieldCX, slotY, SLOT, SLOT, 0x112233)
+      .setStrokeStyle(2, 0x2255aa)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(10);
+    const shieldEmoji = this.add.text(shieldCX, slotY - 8, '🛡️', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const shieldKeyLabel = this.add.text(shieldCX - SLOT / 2 + 4, slotY - SLOT / 2 + 4, '3', {
+      fontSize: '10px', color: '#aaaaaa',
+    }).setDepth(10);
+    this.itemSlotShieldText = this.add.text(shieldCX, slotY + 18, `${ITEM_COST_SHIELD}g`, {
+      fontSize: '11px', color: '#2266cc', fontFamily: 'monospace',
+    }).setOrigin(0.5).setDepth(10);
+    this.uiLayer.add([this.itemSlotShieldBg, shieldEmoji, shieldKeyLabel, this.itemSlotShieldText]);
+    this.itemSlotShieldBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      this.toggleShieldMode();
+    });
 
     const helpText = this.add.text(width / 2, 8, '터치: / → \\ → 제거 | 우클릭: 제거', {
       fontSize: '10px',
@@ -1468,27 +1573,23 @@ export class GameScene extends Phaser.Scene {
     ).setOrigin(0.5).setDepth(100).setVisible(false);
     this.uiLayer.add(this.wallModeText);
 
-    // 시간 정지 오버레이 (초기 숨김)
-    this.timeStopOverlay = this.add.rectangle(0, 0, width, height, 0x220044, TIME_STOP_OVERLAY_ALPHA)
-      .setOrigin(0, 0).setDepth(150).setVisible(false);
-    this.timeStopLabel = this.add.text(
-      width / 2, height / 2 - 30,
-      '⏸ 시간 정지 스킬',
-      { fontSize: '22px', color: '#cc88ff', fontStyle: 'bold' },
-    ).setOrigin(0.5).setDepth(151).setVisible(false);
-    this.timeStopGaugeBg = this.add.rectangle(
-      width / 2, height / 2 + 20,
-      300, 18, 0x333333,
-    ).setOrigin(0.5).setDepth(151).setVisible(false);
-    this.timeStopGauge = this.add.rectangle(
-      width / 2 - 150, height / 2 + 20,
-      300, 18, TIME_STOP_GAUGE_COLOR,
-    ).setOrigin(0, 0.5).setDepth(152).setVisible(false);
-    this.uiLayer.add([this.timeStopOverlay, this.timeStopLabel, this.timeStopGaugeBg, this.timeStopGauge]);
+    // 칼 모드 안내 텍스트
+    this.swordModeText = this.add.text(width / 2, height / 2 - 80, '⚔️ 칼 모드: 적 반사판 클릭', {
+      fontSize: '18px', color: '#4488ff', backgroundColor: '#00000099', padding: { x: 12, y: 6 },
+    }).setOrigin(0.5).setDepth(20).setVisible(false);
+    this.uiLayer.add(this.swordModeText);
 
-    // ESC로 성벽 모드 해제
+    // 쉴드 모드 안내 텍스트
+    this.shieldModeText = this.add.text(width / 2, height / 2 - 80, '🛡️ 쉴드 모드: 내 타워/코어/방어벽 클릭', {
+      fontSize: '18px', color: '#4466ff', backgroundColor: '#00000099', padding: { x: 12, y: 6 },
+    }).setOrigin(0.5).setDepth(20).setVisible(false);
+    this.uiLayer.add(this.shieldModeText);
+
+    // ESC로 모드 해제
     this.input.keyboard?.on('keydown-ESC', () => {
       if (this.wallMode) this.setWallMode(false);
+      if (this.swordMode) this.setSwordMode(false);
+      if (this.shieldMode) this.setShieldMode(false);
     });
 
     // 페이즈 카운터 (상단 게이지 왼쪽)
@@ -1557,30 +1658,14 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private updateItemUI(): void {
-    // 상대 아이템 텍스트 업데이트 (상단 표시)
-    for (let pid = 0; pid < 2; pid++) {
-      const wallText = this.itemUiTexts.wall[pid as 0|1];
-      const tsText = this.itemUiTexts.timeStop[pid as 0|1];
-      const wallCount = this.itemCounts.wall[pid as 0|1];
-      const tsCount = this.itemCounts.timeStop[pid as 0|1];
-
-      if (pid === 0) {
-        wallText?.setText(`🧱 ${wallCount}`).setAlpha(wallCount > 0 ? 1 : 0.4);
-        tsText?.setText(`⏸ ${tsCount}`).setAlpha(tsCount > 0 ? 1 : 0.4);
-      } else {
-        wallText?.setText(`${wallCount} 🧱`).setAlpha(wallCount > 0 ? 1 : 0.4);
-        tsText?.setText(`${tsCount} ⏸`).setAlpha(tsCount > 0 ? 1 : 0.4);
-      }
-    }
-
-    // 내 슬롯 버튼 카운트 업데이트
-    const myWall = this.itemCounts.wall[this.myPlayerId as 0|1];
-    const myTs = this.itemCounts.timeStop[this.myPlayerId as 0|1];
-    this.itemSlotWallText?.setText(`x${myWall}`);
-    if (!this.wallMode) this.itemSlotWallBg?.setAlpha(myWall > 0 ? 1 : 0.4);
-    this.itemSlotTsText?.setText(`x${myTs}`);
-    this.itemSlotTsBg?.setAlpha(myTs > 0 ? 1 : 0.4);
+  private updateItemSlots(): void {
+    this.goldText?.setText(`💰 ${this.myGold}`);
+    const canWall = this.myGold >= ITEM_COST_WALL;
+    const canSword = this.myGold >= ITEM_COST_SWORD;
+    const canShield = this.myGold >= ITEM_COST_SHIELD;
+    if (!this.wallMode)  this.itemSlotWallBg?.setAlpha(canWall ? 1 : 0.4);
+    if (!this.swordMode) this.itemSlotSwordBg?.setAlpha(canSword ? 1 : 0.4);
+    if (!this.shieldMode) this.itemSlotShieldBg?.setAlpha(canShield ? 1 : 0.4);
   }
 
   private showToast(message: string): void {
@@ -1963,12 +2048,7 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onWallPlaced = (msg: WallPlacedMsg) => {
-      this.drawWall(msg.x, msg.y, msg.hp, msg.maxHp);
-      // 사용한 플레이어의 성벽 카운트 감소 (중립 벽 -1은 무시)
-      if (msg.playerId === 0 || msg.playerId === 1) {
-        this.itemCounts.wall[msg.playerId] = Math.max(0, this.itemCounts.wall[msg.playerId] - 1);
-      }
-      this.updateItemUI();
+      this.drawWall(msg.x, msg.y, msg.hp, msg.maxHp, msg.playerId);
     };
 
     this.socket.onWallDamaged = (msg: WallDamagedMsg) => {
@@ -1980,15 +2060,24 @@ export class GameScene extends Phaser.Scene {
       this.rebuildInaccessibleZoneOverlays();
     };
 
-    this.socket.onTimeStopStarted = (msg: TimeStopStartedMsg) => {
-      // 사용한 플레이어의 시간 정지 카운트 감소
-      this.itemCounts.timeStop[msg.playerId as 0|1] = Math.max(0, this.itemCounts.timeStop[msg.playerId as 0|1] - 1);
-      this.updateItemUI();
-      this.showTimeStop(msg.duration);
+    this.socket.onGoldUpdated = (msg: GoldUpdatedMsg) => {
+      if (msg.playerId === this.myPlayerId) {
+        this.myGold = msg.gold;
+        this.updateItemSlots();
+      }
     };
 
-    this.socket.onTimeStopEnded = () => {
-      this.hideTimeStop();
+    this.socket.onSwordUsed = (_msg: SwordUsedMsg) => {
+      // 반사판 제거는 onReflectorRemoved 에서 처리됨
+      this.setSwordMode(false);
+    };
+
+    this.socket.onShieldApplied = (msg: ShieldAppliedMsg) => {
+      this.drawShieldVisual(msg.targetType, msg.targetId);
+    };
+
+    this.socket.onShieldExpired = (msg: ShieldExpiredMsg) => {
+      this.removeShieldVisual(msg.targetId);
     };
 
     this.socket.onMonsterSpawned = (msg: MonsterSpawnedMsg) => {
@@ -2298,7 +2387,7 @@ export class GameScene extends Phaser.Scene {
     return toAbbreviatedString(n);
   }
 
-  private drawWall(gridX: number, gridY: number, hp: number, maxHp: number): void {
+  private drawWall(gridX: number, gridY: number, hp: number, maxHp: number, ownerId: number = -1): void {
     const key = `${gridX},${gridY}`;
     const existing = this.wallVisuals.get(key);
     if (existing) {
@@ -2333,7 +2422,7 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.tilesLayer.add(hpText);
 
-    this.wallVisuals.set(key, { bg, hpBar, hpBarBg, hpText, x: gridX, y: gridY, maxHp, currentHp: hp });
+    this.wallVisuals.set(key, { bg, hpBar, hpBarBg, hpText, x: gridX, y: gridY, maxHp, currentHp: hp, ownerId });
   }
 
   private updateWallHp(gridX: number, gridY: number, hp: number): void {
@@ -2477,33 +2566,52 @@ export class GameScene extends Phaser.Scene {
     this.towerBoxVisuals.delete(spawnId);
   }
 
-  private showTimeStop(duration: number): void {
-    this.timeStopTotal = duration;
-    this.timeStopRemaining = duration;
+  private drawShieldVisual(targetType: 'spawn' | 'core' | 'wall', targetId: string): void {
+    this.removeShieldVisual(targetId);
 
-    this.timeStopOverlay?.setVisible(true);
-    this.timeStopLabel?.setVisible(true);
-    this.timeStopGaugeBg?.setVisible(true);
-    this.timeStopGauge?.setVisible(true);
-    if (this.timeStopGauge) this.timeStopGauge.scaleX = 1;
+    let worldX: number | null = null;
+    let worldY: number | null = null;
 
-    // 게이지 줄어드는 tween
-    if (this.timeStopGauge) {
-      this.tweens.add({
-        targets: this.timeStopGauge,
-        scaleX: 0,
-        duration: duration * 1000,
-        ease: 'Linear',
-      });
+    if (targetType === 'spawn') {
+      const sp = this.serverSpawnPoints.find(s => s.id === parseInt(targetId));
+      if (sp) { worldX = sp.x; worldY = sp.y; }
+    } else if (targetType === 'core') {
+      const core = this.serverCores.find(c => c.id === parseInt(targetId));
+      if (core) { worldX = core.x; worldY = core.y; }
+    } else if (targetType === 'wall') {
+      const [wx, wy] = targetId.split(',').map(Number);
+      if (!isNaN(wx) && !isNaN(wy)) { worldX = wx; worldY = wy; }
     }
+
+    if (worldX === null || worldY === null) return;
+
+    const px = worldX * TILE_SIZE + TILE_SIZE / 2;
+    const py = worldY * TILE_SIZE + TILE_SIZE / 2;
+    const size = TILE_SIZE + 6;
+
+    const shield = this.add.rectangle(px, py, size, size, SHIELD_COLOR, SHIELD_ALPHA)
+      .setDepth(8)
+      .setStrokeStyle(2, SHIELD_COLOR);
+    this.tilesLayer.add(shield);
+
+    this.tweens.add({
+      targets: shield,
+      alpha: { from: SHIELD_ALPHA, to: Math.min(SHIELD_ALPHA * 2, 1) },
+      duration: 800,
+      yoyo: true,
+      repeat: -1,
+    });
+
+    this.shieldVisuals.set(targetId, shield);
   }
 
-  private hideTimeStop(): void {
-    this.timeStopOverlay?.setVisible(false);
-    this.timeStopLabel?.setVisible(false);
-    this.timeStopGaugeBg?.setVisible(false);
-    this.timeStopGauge?.setVisible(false);
-    if (this.timeStopGauge) this.tweens.killTweensOf(this.timeStopGauge);
+  private removeShieldVisual(targetId: string): void {
+    const existing = this.shieldVisuals.get(targetId);
+    if (existing) {
+      this.tweens.killTweensOf(existing);
+      existing.destroy();
+      this.shieldVisuals.delete(targetId);
+    }
   }
 
   private createMyMapButton(): void {

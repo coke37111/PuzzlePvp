@@ -31,8 +31,14 @@ export interface PlaceWallMsg {
   y: number;
 }
 
-export interface UseTimeStopMsg {
-  // 빈 payload
+export interface UseSwordMsg {
+  x: number;
+  y: number;
+}
+
+export interface UseShieldMsg {
+  targetType: 'spawn' | 'core' | 'wall';
+  targetId: string; // spawnId.toString(), coreId.toString(), or "x,y" for walls
 }
 
 // ─── 서버 → 클라이언트 ───────────────────────────────────────────
@@ -250,13 +256,27 @@ export interface WallDestroyedMsg {
   y: number;
 }
 
-export interface TimeStopStartedMsg {
+export interface GoldUpdatedMsg {
   playerId: number;
-  duration: number;
+  gold: number;
 }
 
-export interface TimeStopEndedMsg {
-  // 빈 payload
+export interface SwordUsedMsg {
+  attackerId: number;
+  x: number;
+  y: number;
+}
+
+export interface ShieldAppliedMsg {
+  targetType: 'spawn' | 'core' | 'wall';
+  targetId: string;
+  duration: number;
+  ownerId: number;
+}
+
+export interface ShieldExpiredMsg {
+  targetType: 'spawn' | 'core' | 'wall';
+  targetId: string;
 }
 
 export interface CoreHpMsg {
@@ -328,7 +348,8 @@ export const SocketEvent = {
   PLACE_REFLECTOR: 'place_reflector',
   REMOVE_REFLECTOR: 'remove_reflector',
   PLACE_WALL: 'place_wall',
-  USE_TIME_STOP: 'use_time_stop',
+  USE_SWORD: 'use_sword',
+  USE_SHIELD: 'use_shield',
   LEAVE_QUEUE: 'leave_queue',
   SET_TARGET_PLAYERS: 'set_target_players',
 
@@ -348,8 +369,10 @@ export const SocketEvent = {
   WALL_PLACED: 'wall_placed',
   WALL_DAMAGED: 'wall_damaged',
   WALL_DESTROYED: 'wall_destroyed',
-  TIME_STOP_STARTED: 'time_stop_started',
-  TIME_STOP_ENDED: 'time_stop_ended',
+  GOLD_UPDATED: 'gold_updated',
+  SWORD_USED: 'sword_used',
+  SHIELD_APPLIED: 'shield_applied',
+  SHIELD_EXPIRED: 'shield_expired',
   CORE_HP: 'core_hp',
   CORE_DESTROYED: 'core_destroyed',
   MONSTER_SPAWNED: 'monster_spawned',

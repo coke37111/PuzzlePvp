@@ -10,6 +10,8 @@ import {
   PlaceReflectorMsg,
   RemoveReflectorMsg,
   PlaceWallMsg,
+  UseSwordMsg,
+  UseShieldMsg,
   MatchFoundMsg,
   SpawnPointInfo,
   CoreInfo,
@@ -25,8 +27,6 @@ import {
   WallPlacedMsg,
   WallDamagedMsg,
   WallDestroyedMsg,
-  TimeStopStartedMsg,
-  TimeStopEndedMsg,
   CoreHpMsg,
   CoreDestroyedMsg,
   SpawnPhaseCompleteMsg,
@@ -48,6 +48,10 @@ import {
   TowerBoxDamagedMsg,
   TowerBoxBrokenMsg,
   OwnershipTransferredMsg,
+  GoldUpdatedMsg,
+  SwordUsedMsg,
+  ShieldAppliedMsg,
+  ShieldExpiredMsg,
 } from '@puzzle-pvp/shared';
 import type { MapLayoutConfig } from '@puzzle-pvp/shared';
 
@@ -183,17 +187,6 @@ export class GameRoom {
       this.broadcast(SocketEvent.WALL_DESTROYED, msg);
     };
 
-    this.simulator.onTimeStopStarted = (event) => {
-      const msg: TimeStopStartedMsg = { playerId: event.playerId, duration: event.duration };
-      this.broadcast(SocketEvent.TIME_STOP_STARTED, msg);
-    };
-
-    this.simulator.onTimeStopEnded = () => {
-      const msg: TimeStopEndedMsg = {};
-      this.broadcast(SocketEvent.TIME_STOP_ENDED, msg);
-      for (const ai of this.aiPlayers) ai.notify('timeStopEnded');
-    };
-
     this.simulator.onCoreHpChanged = (event) => {
       const msg: CoreHpMsg = { coreId: event.coreId, hp: event.hp, ownerId: event.ownerId };
       this.broadcast(SocketEvent.CORE_HP, msg);
@@ -285,6 +278,29 @@ export class GameRoom {
     this.simulator.onTowerBoxBroken = (spawnId) => {
       const msg: TowerBoxBrokenMsg = { spawnId };
       this.broadcast(SocketEvent.TOWER_BOX_BROKEN, msg);
+    };
+
+    this.simulator.onGoldUpdated = (playerId, gold) => {
+      const msg: GoldUpdatedMsg = { playerId, gold };
+      // Send only to the player who earned gold (not broadcast)
+      for (const [pid, socket] of this.players) {
+        if (pid === playerId && socket) socket.emit(SocketEvent.GOLD_UPDATED, msg);
+      }
+    };
+
+    this.simulator.onSwordUsed = (attackerId, x, y) => {
+      const msg: SwordUsedMsg = { attackerId, x, y };
+      this.broadcast(SocketEvent.SWORD_USED, msg);
+    };
+
+    this.simulator.onShieldApplied = (targetType, targetId, duration, ownerId) => {
+      const msg: ShieldAppliedMsg = { targetType, targetId, duration, ownerId };
+      this.broadcast(SocketEvent.SHIELD_APPLIED, msg);
+    };
+
+    this.simulator.onShieldExpired = (targetType, targetId) => {
+      const msg: ShieldExpiredMsg = { targetType, targetId };
+      this.broadcast(SocketEvent.SHIELD_EXPIRED, msg);
     };
 
     this.simulator.onOwnershipTransferred = (oldOwnerId, newOwnerId, coreId, coreHp, coreMaxHp, spawnTransfers) => {
@@ -402,10 +418,12 @@ export class GameRoom {
         console.log(`[GameRoom ${this.id}] 성벽 설치 결과: ${ok}`);
       });
 
-      socket.on(SocketEvent.USE_TIME_STOP, () => {
-        console.log(`[GameRoom ${this.id}] P${playerId} 시간 정지 사용`);
-        const ok = this.simulator.useTimeStop(playerId);
-        console.log(`[GameRoom ${this.id}] 시간 정지 결과: ${ok}`);
+      socket.on(SocketEvent.USE_SWORD, (msg: UseSwordMsg) => {
+        this.simulator.useSword(playerId, msg.x, msg.y);
+      });
+
+      socket.on(SocketEvent.USE_SHIELD, (msg: UseShieldMsg) => {
+        this.simulator.useShield(playerId, msg.targetType, msg.targetId);
       });
 
       socket.on('disconnect', () => {
@@ -438,7 +456,8 @@ export class GameRoom {
       socket.removeAllListeners(SocketEvent.PLACE_REFLECTOR);
       socket.removeAllListeners(SocketEvent.REMOVE_REFLECTOR);
       socket.removeAllListeners(SocketEvent.PLACE_WALL);
-      socket.removeAllListeners(SocketEvent.USE_TIME_STOP);
+      socket.removeAllListeners(SocketEvent.USE_SWORD);
+      socket.removeAllListeners(SocketEvent.USE_SHIELD);
       socket.removeAllListeners('disconnect');
     }
 
