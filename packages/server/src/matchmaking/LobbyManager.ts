@@ -7,7 +7,7 @@ export class LobbyManager {
   private countdownSeconds: number = -1;
 
   readonly MAX_PLAYERS = 16;
-  readonly MIN_PLAYERS = 1;
+  readonly MIN_PLAYERS = 2;  // 2명 이상 모여야 카운트다운 시작 (1명 혼자 자동 시작 방지)
   readonly COUNTDOWN_DURATION = 10;
 
   /** 게임 시작 시 호출: sockets=실제 소켓, playerCount=AI 채움 후 총 인원 */

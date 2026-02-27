@@ -96,6 +96,7 @@ export class GameRoom {
         phaseNumber: this.simulator.phaseNumber,
       };
       this.broadcast(SocketEvent.BALL_SPAWNED, msg);
+      for (const ai of this.aiPlayers) ai.notify('ballCreated', { ball, direction });
     };
 
     this.simulator.onBallMoved = (ball, from, to) => {
@@ -108,6 +109,7 @@ export class GameRoom {
         speedMultiplier: ball.speedMultiplier,
       };
       this.broadcast(SocketEvent.BALL_MOVED, msg);
+      for (const ai of this.aiPlayers) ai.notify('ballMoved', { ball, from, to });
     };
 
     this.simulator.onBallEnded = (ball, tile, reason, direction) => {
@@ -119,6 +121,7 @@ export class GameRoom {
         direction,
       };
       this.broadcast(SocketEvent.BALL_ENDED, msg);
+      for (const ai of this.aiPlayers) ai.notify('ballEnded', { ball });
     };
 
     this.simulator.onSpawnHpChanged = (event) => {
@@ -129,11 +132,13 @@ export class GameRoom {
     this.simulator.onSpawnDestroyed = (spawnId, respawnDuration) => {
       const msg: SpawnDestroyedMsg = { spawnId, respawnDuration };
       this.broadcast(SocketEvent.SPAWN_DESTROYED, msg);
+      for (const ai of this.aiPlayers) ai.notify('spawnDestroyed', { spawnId });
     };
 
     this.simulator.onSpawnRespawned = (spawnId, hp) => {
       const msg: SpawnRespawnedMsg = { spawnId, hp };
       this.broadcast(SocketEvent.SPAWN_RESPAWNED, msg);
+      for (const ai of this.aiPlayers) ai.notify('spawnRespawned', { spawnId, hp });
     };
 
     this.simulator.onReflectorPlaced = (placement) => {
@@ -186,11 +191,13 @@ export class GameRoom {
     this.simulator.onTimeStopEnded = () => {
       const msg: TimeStopEndedMsg = {};
       this.broadcast(SocketEvent.TIME_STOP_ENDED, msg);
+      for (const ai of this.aiPlayers) ai.notify('timeStopEnded');
     };
 
     this.simulator.onCoreHpChanged = (event) => {
       const msg: CoreHpMsg = { coreId: event.coreId, hp: event.hp, ownerId: event.ownerId };
       this.broadcast(SocketEvent.CORE_HP, msg);
+      for (const ai of this.aiPlayers) ai.notify('coreHpChanged', event);
     };
 
     this.simulator.onCoreDestroyed = (coreId) => {
@@ -206,6 +213,7 @@ export class GameRoom {
     this.simulator.onReflectorStockChanged = (playerId, stock, cooldownElapsed) => {
       const msg: ReflectorStockMsg = { playerId, stock, cooldownElapsed };
       this.broadcast(SocketEvent.REFLECTOR_STOCK, msg);
+      for (const ai of this.aiPlayers) ai.notify('stockChanged', { playerId, stock });
     };
 
     this.simulator.onMonsterSpawned = (id, monsterType, x, y, hp, maxHp) => {
@@ -231,6 +239,7 @@ export class GameRoom {
     this.simulator.onItemDropped = (itemId, x, y, itemType) => {
       const msg: ItemDroppedMsg = { itemId, x, y, itemType };
       this.broadcast(SocketEvent.ITEM_DROPPED, msg);
+      for (const ai of this.aiPlayers) ai.notify('itemDropped', { itemId, x, y });
     };
 
     this.simulator.onItemPickedUp = (itemId, ballId, ballOwnerId) => {
@@ -281,6 +290,7 @@ export class GameRoom {
     this.simulator.onOwnershipTransferred = (oldOwnerId, newOwnerId, coreId, coreHp, coreMaxHp, spawnTransfers) => {
       const msg: OwnershipTransferredMsg = { oldOwnerId, newOwnerId, coreId, coreHp, coreMaxHp, spawnTransfers };
       this.broadcast(SocketEvent.OWNERSHIP_TRANSFERRED, msg);
+      for (const ai of this.aiPlayers) ai.notify('ownershipTransferred', { oldOwnerId, newOwnerId });
     };
 
     this.simulator.onPlayerEliminated = (playerId, teamId, remainingPlayers) => {

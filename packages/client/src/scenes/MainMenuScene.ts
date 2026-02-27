@@ -27,7 +27,7 @@ export class MainMenuScene extends Phaser.Scene {
     const btn = this.add.rectangle(width / 2, height * 0.6, 220, 60, 0x4444aa, 1)
       .setInteractive({ useHandCursor: true });
 
-    const btnText = this.add.text(width / 2, height * 0.6, '게임 시작', {
+    this.add.text(width / 2, height * 0.6, '게임 시작', {
       fontSize: '24px',
       color: '#ffffff',
     }).setOrigin(0.5);

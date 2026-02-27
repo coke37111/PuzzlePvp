@@ -94,13 +94,14 @@ export const TOWER_BOX_HP: Record<number, number> = {
   3: 1_000_000,
 };
 
-// ========== 존 경계 벽 HP 계산 (중앙 100, 가장자리 10M 계단식) ==========
+// ========== 존 경계 벽 HP 계산 (중앙 10M, 가장자리 1K 계단식) ==========
 function calcZoneWallHp(pos: number, totalLen: number): number {
   const center = (totalLen - 1) / 2;
+  const maxDist = Math.max(center, 0.001);
   const dist = Math.abs(pos - center);
-  const t = totalLen > 1 ? dist / center : 0;
-  const level = Math.min(5, Math.round(t * 5));
-  return Math.pow(10, 2 + level);  // 100, 1K, 10K, 100K, 1M, 10M
+  const t = dist / maxDist;
+  const level = Math.min(4, Math.round(t * 4));
+  return Math.pow(10, 7 - level);  // 중앙: 10M, 가장자리: 1K
 }
 
 // ========== 배열 셔플 유틸 ==========

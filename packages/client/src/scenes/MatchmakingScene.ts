@@ -47,7 +47,7 @@ export class MatchmakingScene extends Phaser.Scene {
       color: '#8888cc',
     }).setOrigin(0.5);
 
-    // 인원 선택 버튼 (테스트용)
+    // 인원 선택 버튼 (현재 대기 인원 + AI 채움으로 즉시 시작)
     const sizeOptions: { count: number; label: string }[] = [
       { count: 2,  label: '2\n(2×1)' },
       { count: 4,  label: '4\n(2×2)' },
@@ -58,9 +58,9 @@ export class MatchmakingScene extends Phaser.Scene {
     const btnW = 100, btnH = 52, gap = 10;
     const totalW = sizeOptions.length * btnW + (sizeOptions.length - 1) * gap;
     const startX = (width - totalW) / 2 + btnW / 2;
-    const btnY = height * 0.65;
+    const btnY = height * 0.72;
 
-    this.add.text(width / 2, btnY - 38, '[ 인원 선택 ]', {
+    this.add.text(width / 2, btnY - 38, '인원 선택 후 즉시 시작 (부족 시 AI 충원)', {
       fontSize: '14px',
       color: '#888899',
     }).setOrigin(0.5);
@@ -84,9 +84,9 @@ export class MatchmakingScene extends Phaser.Scene {
     });
 
     // 취소 버튼
-    const cancelBtn = this.add.rectangle(width / 2, height * 0.82, 160, 50, 0x444444)
+    const cancelBtn = this.add.rectangle(width / 2, height * 0.88, 160, 50, 0x444444)
       .setInteractive({ useHandCursor: true });
-    this.add.text(width / 2, height * 0.82, '취소', {
+    this.add.text(width / 2, height * 0.88, '취소', {
       fontSize: '20px',
       color: '#ffffff',
     }).setOrigin(0.5);
@@ -103,7 +103,7 @@ export class MatchmakingScene extends Phaser.Scene {
     this.socket.onLobbyUpdate = (msg) => {
       this.hasLobbyInfo = true;
       this.statusText.setVisible(false);
-      this.playerCountText.setText(`${msg.currentPlayers}/${msg.maxPlayers}명 대기 중`);
+      this.playerCountText.setText(`${msg.currentPlayers}명 대기 중`);
       this.countdownText.setText(msg.countdown >= 0 ? `${msg.countdown}` : '');
     };
 

@@ -253,6 +253,10 @@ export class GameScene extends Phaser.Scene {
   private playerPowerLevel: Map<number, number> = new Map();
   private enemyZoneTiles: Set<string> = new Set(); // "x,y" 형식
   private enemyZoneOverlays: Map<number, Phaser.GameObjects.Rectangle[]> = new Map(); // spawnId → overlays
+  // 격벽 미파괴 구역 오버레이
+  private inaccessibleZoneTiles: Set<string> = new Set();
+  private inaccessibleZoneOverlays: Phaser.GameObjects.Rectangle[] = [];
+  private capturedZones: Map<number, number> = new Map(); // oldOwnerId → capturedByPlayerId
   // 반사판 스톡 UI
   private reflectorCooldown: number = 3.0;
   private maxReflectorStock: number = 5;
@@ -353,6 +357,9 @@ export class GameScene extends Phaser.Scene {
     this.playerPowerLevel.clear();
     this.enemyZoneTiles.clear();
     this.enemyZoneOverlays.clear();
+    this.inaccessibleZoneTiles.clear();
+    this.inaccessibleZoneOverlays = [];
+    this.capturedZones.clear();
     this.hoverHighlight = null;
     this.wallMode = false;
     this.wallModeText = null;
@@ -387,6 +394,7 @@ export class GameScene extends Phaser.Scene {
     for (const w of this._initWalls) {
       this.drawWall(w.x, w.y, w.hp, w.maxHp);
     }
+    this.rebuildInaccessibleZoneOverlays();
     for (const m of this._initMonsters) {
       this.drawMonster(m.id, m.monsterType, m.x, m.y, m.hp, m.maxHp);
     }
@@ -746,6 +754,68 @@ export class GameScene extends Phaser.Scene {
       if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
       if (this.mapData.tiles[ny][nx] !== 1) continue;
       this.enemyZoneTiles.add(`${nx},${ny}`);
+    }
+  }
+
+  /** 격벽 미파괴로 인해 설치 불가한 상대 구역 타일에 붉은 오버레이 표시 */
+  private rebuildInaccessibleZoneOverlays(): void {
+    // 기존 오버레이 제거
+    for (const o of this.inaccessibleZoneOverlays) o.destroy();
+    this.inaccessibleZoneOverlays = [];
+    this.inaccessibleZoneTiles.clear();
+
+    if (!this.layout) return;
+
+    const myZone = this.layout.zones.find(z => z.playerId === this.myPlayerId);
+    if (!myZone) return;
+
+    const { zoneSize, wallThickness } = this.layout;
+
+    for (const zone of this.layout.zones) {
+      if (zone.playerId === this.myPlayerId) continue;
+      // 점령한 구역은 접근 가능
+      if (this.capturedZones.get(zone.playerId) === this.myPlayerId) continue;
+
+      const dcol = zone.zoneCol - myZone.zoneCol;
+      const drow = zone.zoneRow - myZone.zoneRow;
+
+      for (let ly = 0; ly < zone.height; ly++) {
+        for (let lx = 0; lx < zone.width; lx++) {
+          const wx = zone.originX + lx;
+          const wy = zone.originY + ly;
+          let accessible = false;
+
+          if (dcol !== 0 && drow === 0) {
+            // 수평 인접: 해당 y 행의 모든 격벽 파괴 여부 확인
+            const startCol = Math.min(myZone.zoneCol, zone.zoneCol);
+            const endCol   = Math.max(myZone.zoneCol, zone.zoneCol);
+            accessible = true;
+            for (let col = startCol; col < endCol; col++) {
+              const wallX = col * (zoneSize + wallThickness) + zoneSize;
+              if (this.wallVisuals.has(`${wallX},${wy}`)) { accessible = false; break; }
+            }
+          } else if (drow !== 0 && dcol === 0) {
+            // 수직 인접: 해당 x 열의 모든 격벽 파괴 여부 확인
+            const startRow = Math.min(myZone.zoneRow, zone.zoneRow);
+            const endRow   = Math.max(myZone.zoneRow, zone.zoneRow);
+            accessible = true;
+            for (let row = startRow; row < endRow; row++) {
+              const wallY = row * (zoneSize + wallThickness) + zoneSize;
+              if (this.wallVisuals.has(`${wx},${wallY}`)) { accessible = false; break; }
+            }
+          }
+          // dcol≠0 && drow≠0 → 대각선 = accessible 유지 false
+
+          if (!accessible) {
+            this.inaccessibleZoneTiles.add(`${wx},${wy}`);
+            const px = wx * TILE_SIZE + TILE_SIZE / 2;
+            const py = wy * TILE_SIZE + TILE_SIZE / 2;
+            const overlay = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, 0xff0000, ENEMY_ZONE_ALPHA);
+            this.tilesLayer.add(overlay);
+            this.inaccessibleZoneOverlays.push(overlay);
+          }
+        }
+      }
     }
   }
 
@@ -1182,8 +1252,9 @@ export class GameScene extends Phaser.Scene {
       const tile = this.mapModel.getTile(gridX, gridY);
       const hasReflector = this.reflectorVisuals.has(`${gridX},${gridY}`);
       const isEnemyZone = this.enemyZoneTiles.has(`${gridX},${gridY}`);
+      const isInaccessible = this.inaccessibleZoneTiles.has(`${gridX},${gridY}`);
 
-      if (!tile || !tile.isReflectorSetable || hasReflector || isEnemyZone) {
+      if (!tile || !tile.isReflectorSetable || hasReflector || isEnemyZone || isInaccessible) {
         if (this.hoverHighlight) this.hoverHighlight.setVisible(false);
         return;
       }
@@ -1246,6 +1317,7 @@ export class GameScene extends Phaser.Scene {
         if (!tile || !tile.isReflectorSetable) return;
         if (this.wallVisuals.has(key) || existing) return;
         if (this.enemyZoneTiles.has(key)) return;
+        if (this.inaccessibleZoneTiles.has(key)) return;
         this.socket.placeWall(gridX, gridY);
         this.setWallMode(false);
         return;
@@ -1253,6 +1325,7 @@ export class GameScene extends Phaser.Scene {
 
       if (!tile || !tile.isReflectorSetable) return;
       if (this.enemyZoneTiles.has(`${gridX},${gridY}`)) return;
+      if (this.inaccessibleZoneTiles.has(`${gridX},${gridY}`)) return;
 
       if (!existing) {
         // 빈 타일 → Slash 설치: 스톡 없으면 경고
@@ -1340,15 +1413,6 @@ export class GameScene extends Phaser.Scene {
       this.muteBtnBg!.setStrokeStyle(1, this.sfx.muted ? 0x444444 : 0x448844);
     });
 
-    // 좌상단: 내 팀 (항상 파란색)
-    const myCountText = this.add.text(
-      8, 28,
-      `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
-      { fontSize: '13px', color: '#4488ff', fontStyle: 'bold' },
-    ).setOrigin(0, 0);
-    this.reflectorCountTexts[this.myPlayerId] = myCountText;
-    this.uiLayer.add(myCountText);
-
     // 내 아이템 슬롯 버튼 (좌하단, 터치 가능)
     const SLOT = 56;
     const wallCX = 8 + SLOT / 2;
@@ -1389,30 +1453,6 @@ export class GameScene extends Phaser.Scene {
       this.useTimeStop();
     });
 
-    // 우상단: 상대 팀 (항상 빨간색)
-    const oppCountText = this.add.text(
-      width - 8, 8,
-      `◆ ${MAX_REFLECTORS_PER_PLAYER}/${MAX_REFLECTORS_PER_PLAYER}`,
-      { fontSize: '13px', color: '#ff4444', fontStyle: 'bold' },
-    ).setOrigin(1, 0);
-    this.reflectorCountTexts[opponentId] = oppCountText;
-    this.uiLayer.add(oppCountText);
-
-    const oppWallText = this.add.text(
-      width - 8, 26,
-      `${INITIAL_WALL_COUNT} [1]🧱`,
-      { fontSize: '12px', color: '#ddaa44', fontStyle: 'bold' },
-    ).setOrigin(1, 0);
-    this.itemUiTexts.wall[opponentId as 0|1] = oppWallText;
-    this.uiLayer.add(oppWallText);
-
-    const oppTsText = this.add.text(
-      width - 8, 42,
-      `${INITIAL_TIME_STOP_COUNT} [2]⏸`,
-      { fontSize: '12px', color: '#aa88ff', fontStyle: 'bold' },
-    ).setOrigin(1, 0);
-    this.itemUiTexts.timeStop[opponentId as 0|1] = oppTsText;
-    this.uiLayer.add(oppTsText);
 
     const helpText = this.add.text(width / 2, 8, '터치: / → \\ → 제거 | 우클릭: 제거', {
       fontSize: '10px',
@@ -1898,6 +1938,10 @@ export class GameScene extends Phaser.Scene {
           this.addEnemyZoneForSpawn(st.spawnId, spInfo.x, spInfo.y, msg.newOwnerId);
         }
       }
+
+      // 점령 기록 + 격벽 오버레이 재계산
+      this.capturedZones.set(msg.oldOwnerId, msg.newOwnerId);
+      this.rebuildInaccessibleZoneOverlays();
     };
 
     this.socket.onGameOver = (msg: GameOverMsg) => {
@@ -1933,6 +1977,7 @@ export class GameScene extends Phaser.Scene {
 
     this.socket.onWallDestroyed = (msg: WallDestroyedMsg) => {
       this.removeWallVisual(msg.x, msg.y);
+      this.rebuildInaccessibleZoneOverlays();
     };
 
     this.socket.onTimeStopStarted = (msg: TimeStopStartedMsg) => {
@@ -2051,7 +2096,7 @@ export class GameScene extends Phaser.Scene {
 
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
-    const s = TILE_SIZE / 2 - 4;
+    const s = monsterType === MonsterType.Purple ? TILE_SIZE / 2 - 4 : Math.round((TILE_SIZE / 2 - 4) * 0.7);
     const color  = MONSTER_COLORS[monsterType]  ?? MONSTER_COLORS[0];
     const border = MONSTER_BORDERS[monsterType] ?? MONSTER_BORDERS[0];
 

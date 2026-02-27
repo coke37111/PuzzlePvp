@@ -122,6 +122,7 @@ export class BattleSimulator {
   private playerZoneBounds: Map<number, { xMin: number; xMax: number; yMin: number; yMax: number }> = new Map();
   private playerZones: Map<number, PlayerZone> = new Map();
   private towerBoxes: Map<number, TowerBoxModel> = new Map();  // spawnId → box
+  private capturedZones: Map<number, number> = new Map();      // oldOwnerId → capturedByPlayerId
 
   // 이벤트
   onSpawnHpChanged?: (event: SpawnEvent) => void;
@@ -211,6 +212,10 @@ export class BattleSimulator {
     return Array.from(this.towerBoxes.values());
   }
 
+  getTowerBox(spawnId: number): TowerBoxModel | undefined {
+    return this.towerBoxes.get(spawnId);
+  }
+
   getDroppedItemPositions(): { x: number; y: number }[] {
     return Array.from(this.droppedItems.values())
       .filter(item => !item.pickedUp)
@@ -261,6 +266,7 @@ export class BattleSimulator {
     this.droppedItems.clear();
     this.nextItemId = 1;
     this.towerBoxes.clear();
+    this.capturedZones.clear();
 
     // 항상 assignments 기반 초기화 (N:N 포함 2인도 동일 경로)
     const raw = this.map.rawData!;
@@ -356,10 +362,11 @@ export class BattleSimulator {
       // 4. 스폰포인트 체크 (소유권 기반)
       const sp = this.spawnPoints.find(s => s.tile.x === tile.x && s.tile.y === tile.y);
 
-      // 4a. 타워 박스 체크 (잠긴 타워 → 박스가 있으면 박스에 데미지)
+      // 4a. 타워 박스 체크 (잠긴 타워 → 아군 공만 박스에 데미지, 적 공은 흡수)
       if (sp && !sp.active) {
         const box = this.towerBoxes.get(sp.id);
         if (box && !box.broken) {
+          if (ball.ownerId !== sp.ownerId) return true; // 적 공: 잠긴 타워에 무효
           const destroyed = box.damage(ball.power);
           this.onTowerBoxDamaged?.(sp.id, box.hp, box.maxHp);
           if (destroyed) {
@@ -630,10 +637,10 @@ export class BattleSimulator {
       }
     }
 
-    // 각 존 몬스터 수 보충 (처치 후 리스폰 실패로 감소한 경우 복구)
+    // 각 존 몬스터 수 보충 (Purple 제외 일반 몬스터만 3마리 유지)
     for (const pid of this.playerIds) {
       const monsterList = this.monsters.get(pid)!;
-      const activeCount = monsterList.filter(m => m.active).length;
+      const activeCount = monsterList.filter(m => m.active && m.type !== MonsterType.Purple).length;
       const deficit = BattleSimulator.MAX_MONSTERS_PER_ZONE - activeCount;
       for (let i = 0; i < deficit; i++) {
         const tile = this.pickRandomEmptyTile(pid);
@@ -642,6 +649,25 @@ export class BattleSimulator {
         const m = new MonsterModel(this.nextMonsterId++, this.pickRandomMonsterType(), tile.x, tile.y, Math.ceil(Math.pow(1.1, gen)));
         monsterList.push(m);
         this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
+      }
+    }
+
+    // Purple 몬스터 별도 스폰 (전체 게임에서 동시에 1마리 제한, 0.1% 확률)
+    const anyPurpleActive = [...this.monsters.values()].some(list =>
+      list.some(m => m.active && m.type === MonsterType.Purple));
+    if (!anyPurpleActive) {
+      for (const pid of this.playerIds) {
+        if (Math.random() * 100 < 0.1) {
+          const tile = this.pickRandomEmptyTile(pid);
+          if (tile) {
+            const gen = this.monsterGeneration.get(pid) ?? 0;
+            const baseHp = Math.ceil(Math.pow(1.1, gen));
+            const m = new MonsterModel(this.nextMonsterId++, MonsterType.Purple, tile.x, tile.y, baseHp * 5);
+            this.monsters.get(pid)!.push(m);
+            this.onMonsterSpawned?.(m.id, m.type, m.x, m.y, m.hp, m.maxHp);
+          }
+          break; // 한 존에만 스폰
+        }
       }
     }
 
@@ -732,12 +758,16 @@ export class BattleSimulator {
     for (const sp of this.spawnPoints) {
       if (sp.ownerId === oldOwnerId) {
         sp.ownerId = newOwnerId;
-        // 파괴 상태인 스폰은 즉시 재활성화
+        // 파괴 대기 중인 스폰만 재활성화 (잠긴 타워는 박스가 파괴될 때까지 비활성 유지)
         if (!sp.active) {
-          sp.hp = this.config.spawnHp;
-          sp.maxHp = this.config.spawnHp;
-          sp.active = true;
-          this.spawnRespawnTimers.delete(sp.id);
+          const box = this.towerBoxes.get(sp.id);
+          const isLocked = box && !box.broken;
+          if (!isLocked) {
+            sp.hp = this.config.spawnHp;
+            sp.maxHp = this.config.spawnHp;
+            sp.active = true;
+            this.spawnRespawnTimers.delete(sp.id);
+          }
         }
         spawnTransfers.push({ spawnId: sp.id, hp: sp.hp, maxHp: sp.maxHp, active: sp.active });
       }
@@ -767,6 +797,9 @@ export class BattleSimulator {
     if (zone) {
       zone.eliminated = true;
     }
+
+    // 점령 기록
+    this.capturedZones.set(oldOwnerId, newOwnerId);
 
     // 콜백 알림
     this.onOwnershipTransferred?.(
@@ -873,7 +906,69 @@ export class BattleSimulator {
     return false;
   }
 
+  /**
+   * (x,y)가 playerId 기준으로 설치 가능한 구역인지 확인.
+   * - 자신의 구역: 항상 가능
+   * - 점령한 구역: 항상 가능
+   * - 인접 구역(직선): 격벽이 파괴된 행/열만 가능
+   * - 대각선 구역: 불가
+   */
+  isZoneAccessible(playerId: number, x: number, y: number): boolean {
+    const layout = this.map.rawData?.layout;
+    if (!layout) return true; // 레거시 모드: 제한 없음
+
+    const myZone = this.playerZones.get(playerId);
+    if (!myZone) return true;
+
+    // 자기 구역
+    if (x >= myZone.originX && x < myZone.originX + myZone.width &&
+        y >= myZone.originY && y < myZone.originY + myZone.height) {
+      return true;
+    }
+
+    // 대상 구역 탐색
+    let targetZone: PlayerZone | null = null;
+    for (const zone of this.playerZones.values()) {
+      if (x >= zone.originX && x < zone.originX + zone.width &&
+          y >= zone.originY && y < zone.originY + zone.height) {
+        targetZone = zone;
+        break;
+      }
+    }
+    if (!targetZone) return false; // 격벽 타일 위 (반사판 불가)
+
+    // 점령한 구역이면 항상 가능
+    if (this.capturedZones.get(targetZone.playerId) === playerId) return true;
+
+    const dcol = targetZone.zoneCol - myZone.zoneCol;
+    const drow = targetZone.zoneRow - myZone.zoneRow;
+    if (dcol !== 0 && drow !== 0) return false; // 대각선 방향 = 직선 불가
+
+    const { zoneSize, wallThickness } = layout;
+
+    if (dcol !== 0) {
+      // 수평 이동: x 방향으로 격벽 통과 → 해당 y 행의 격벽이 모두 파괴되어야 함
+      const startCol = Math.min(myZone.zoneCol, targetZone.zoneCol);
+      const endCol   = Math.max(myZone.zoneCol, targetZone.zoneCol);
+      for (let col = startCol; col < endCol; col++) {
+        const wallX = col * (zoneSize + wallThickness) + zoneSize;
+        if (this.walls.has(`${wallX},${y}`)) return false;
+      }
+      return true;
+    } else {
+      // 수직 이동: y 방향으로 격벽 통과 → 해당 x 열의 격벽이 모두 파괴되어야 함
+      const startRow = Math.min(myZone.zoneRow, targetZone.zoneRow);
+      const endRow   = Math.max(myZone.zoneRow, targetZone.zoneRow);
+      for (let row = startRow; row < endRow; row++) {
+        const wallY = row * (zoneSize + wallThickness) + zoneSize;
+        if (this.walls.has(`${x},${wallY}`)) return false;
+      }
+      return true;
+    }
+  }
+
   placeReflector(playerId: number, x: number, y: number, type: ReflectorType): boolean {
+    if (!this.isZoneAccessible(playerId, x, y)) return false;
     if (this.isEnemySpawnZone(playerId, x, y)) return false;
     if (this.walls.has(`${x},${y}`)) return false;
     if (this.getMonsters().some(m => m.active && m.x === x && m.y === y)) return false;
@@ -965,11 +1060,10 @@ export class BattleSimulator {
     return true;
   }
 
-  /** 확률에 따라 몬스터 타입 결정: Orange 50%, White 30%, LightBlue 19.9%, Purple 0.1% */
+  /** 확률에 따라 몬스터 타입 결정: Orange 50%, White 30%, LightBlue 20% (Purple 별도 처리) */
   private pickRandomMonsterType(): MonsterType {
     const r = Math.random() * 100;
-    if (r < 0.1)  return MonsterType.Purple;    // 0.1%
-    if (r < 20.0) return MonsterType.LightBlue; // 19.9%
+    if (r < 20.0) return MonsterType.LightBlue; // 20%
     if (r < 50.0) return MonsterType.White;     // 30%
     return MonsterType.Orange;                   // 50%
   }
@@ -991,6 +1085,7 @@ export class BattleSimulator {
 
   /** 반사판 설치 가능 여부 확인 (AI용) */
   canPlaceReflector(playerId: number, x: number, y: number): boolean {
+    if (!this.isZoneAccessible(playerId, x, y)) return false;
     if (this.isEnemySpawnZone(playerId, x, y)) return false;
     if (this.walls.has(`${x},${y}`)) return false;
     if (this.getMonsters().some(m => m.active && m.x === x && m.y === y)) return false;
