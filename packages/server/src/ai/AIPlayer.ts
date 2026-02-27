@@ -63,6 +63,13 @@ export class AIPlayer {
   // 스톡 추적
   private lastStockLevel: number = 3;
 
+  // 골드 소비 타이머
+  private goldTimer: number = 0;
+  private readonly GOLD_DECISION_INTERVAL = 1.5;
+
+  // 파밍 계획
+  private farmPlan: { x: number; y: number; type: ReflectorType }[] = [];
+
   // 캐시
   private cachedMyCore: CoreModel | null = null;
   private cachedEnemyCores: CoreModel[] = [];
@@ -125,6 +132,13 @@ export class AIPlayer {
     this.gameTime += delta;
     this.stateTimer += delta;
 
+    // 골드 소비 결정 (매 프레임 누적)
+    this.goldTimer += delta;
+    if (this.goldTimer >= this.GOLD_DECISION_INTERVAL) {
+      this.goldTimer = 0;
+      this.trySpendGold();
+    }
+
     // 즉시 반응 (트리거 설정됨)
     if (this.immediateActionPending) {
       this.immediateActionPending = false;
@@ -169,12 +183,14 @@ export class AIPlayer {
     const myCore = this.getMyCore();
     if (myCore && myCore.hp / myCore.maxHp < 0.5) return AIState.DEFENDING;
 
-    // 스톡 부족 → 대기
+    // 스톡 부족 → 대기 (파밍 목표 있으면 파밍)
     if (stock <= 2) return this.hasFarmTargets() ? AIState.FARMING : AIState.IDLE;
 
-    // 스톡 충분 → 공격 또는 파밍
+    // 스톡 충분 → 파밍 > 공격 (파밍 목표 있으면 항상 파밍 우선)
+    // 적 코어가 매우 약할 때만(< 15%) 공격 우선
     const weakEnemy = this.getWeakestEnemyCore();
-    if (weakEnemy && weakEnemy.hp / weakEnemy.maxHp < 0.4) return AIState.ATTACKING;
+    const enemyNearDeath = weakEnemy && weakEnemy.hp / weakEnemy.maxHp < 0.15;
+    if (enemyNearDeath) return AIState.ATTACKING;
     if (this.hasFarmTargets()) return AIState.FARMING;
     return AIState.ATTACKING;
   }
@@ -235,14 +251,22 @@ export class AIPlayer {
     if (best) this.simulator.placeReflector(this.playerId, best.x, best.y, best.type);
   }
 
-  // FARMING: 공 유지 + 성장 중심, 힐링도 포함
+  // FARMING: 스폰 기준 전체 반사판 배치 계획 → 단계적 실행
   private updateFarming(): void {
     const stock = this.simulator.getReflectorStock(this.playerId);
-    if (stock <= 1) return; // 예비 1개 유지
+    if (stock <= 0) return;
+
+    // 매 틱마다 최적 배치 재계산 (몬스터/아이템 위치 변동 반영)
+    this.farmPlan = this.planFarmLayout();
+
+    // 계획 실행 (한 틱에 하나씩)
+    if (this.executeFarmPlan()) return;
+
+    // 계획 완료 후 잔여 스톡으로 방어/힐링/공격 보조
+    if (stock <= 1) return;
     const mult = this.getStateMultipliers();
     const scoreMap = new Map<string, Candidate>();
     this.scoreBallRetentionCandidates(scoreMap, mult.retention);
-    this.scoreGrowthCandidates(scoreMap, mult.growth);
     this.scoreHealingCandidates(scoreMap, mult.healing);
     this.scoreDefenseCandidates(scoreMap, mult.defense);
     this.scoreAttackCandidates(scoreMap, mult.attack);
@@ -394,16 +418,16 @@ export class AIPlayer {
     let m: Multipliers;
     switch (this.state) {
       case AIState.IDLE:
-        m = { defense: 0.3, healing: 1.0, attack: 0.2, growth: 0.5, retention: 0.3, unlock: 1.2 };
+        m = { defense: 0.3, healing: 1.0, attack: 0.2, growth: 1.0, retention: 0.3, unlock: 1.2 };
         break;
       case AIState.DEFENDING:
-        m = { defense: 2.5, healing: 2.0, attack: 0.3, growth: 0.2, retention: 0.8, unlock: 0.5 };
+        m = { defense: 2.5, healing: 2.0, attack: 0.3, growth: 0.3, retention: 0.8, unlock: 0.5 };
         break;
       case AIState.ATTACKING:
-        m = { defense: 0.4, healing: 0.8, attack: 2.0, growth: 0.5, retention: 1.5, unlock: 1.0 };
+        m = { defense: 0.4, healing: 0.8, attack: 2.0, growth: 1.0, retention: 1.5, unlock: 1.0 };
         break;
       case AIState.FARMING:
-        m = { defense: 0.4, healing: 0.8, attack: 0.4, growth: 2.0, retention: 1.5, unlock: 1.0 };
+        m = { defense: 0.4, healing: 0.8, attack: 0.5, growth: 2.5, retention: 1.5, unlock: 1.0 };
         break;
       default:
         m = { defense: 1, healing: 1, attack: 1, growth: 1, retention: 1, unlock: 1 };
@@ -700,7 +724,13 @@ export class AIPlayer {
   }
 
   /**
-   * [성장] 내 공을 몬스터/아이템으로 유도하는 1-바운스 배치에 점수.
+   * [성장] 방향 변화(반사판) 대비 최대 아이템/몬스터 획득 경로를 찾아 첫 반사판 위치에 점수.
+   *
+   * 알고리즘:
+   * 1. 공 진행 경로의 각 칸을 첫 반사판 후보로 평가
+   * 2. 각 후보에서 반사 후 경로를 최대 2회 추가 바운스까지 재귀 탐색
+   * 3. 효율 = 누적 획득 점수 / 총 반사판 수 로 경로 비교
+   * 4. 가장 높은 효율의 경로에 해당하는 첫 반사판 위치를 선택
    */
   private scoreGrowthCandidates(map: Map<string, Candidate>, multiplier: number): void {
     if (multiplier === 0) return;
@@ -712,43 +742,344 @@ export class AIPlayer {
     );
     if (myBalls.length === 0) return;
 
-    const monsters = this.simulator.getMonsters().filter(m => m.active && this.isInMyZone(m.x, m.y));
-    const items = this.simulator.getDroppedItems().filter(i => this.isInMyZone(i.x, i.y));
+    const rawMonsters = this.simulator.getMonsters().filter(m => m.active && this.isInOrNearMyZone(m.x, m.y, 2));
+    const rawItems = this.simulator.getDroppedItems().filter(i => this.isInOrNearMyZone(i.x, i.y, 2));
+    if (rawMonsters.length === 0 && rawItems.length === 0) return;
+
+    // O(1) 좌표 조회를 위한 맵 구성
+    const monsterMap = new Map<string, typeof rawMonsters[0]>();
+    for (const m of rawMonsters) monsterMap.set(`${m.x},${m.y}`, m);
+    const itemMap = new Map<string, typeof rawItems[0]>();
+    for (const i of rawItems) itemMap.set(`${i.x},${i.y}`, i);
 
     for (const ball of myBalls) {
-      const bx = ball.currentTile.x;
-      const by = ball.currentTile.y;
+      // 공의 실제 이동 경로를 따라가며 첫 반사판 후보 위치 탐색.
+      // 기존 반사판이 있으면 그 방향으로 꺾어 따라감 (직진 가정 X).
+      let cx = ball.currentTile.x;
+      let cy = ball.currentTile.y;
+      let currentDir = ball.direction;
 
-      for (const m of monsters) {
-        const result = this.findReflectorForTarget(bx, by, ball.direction, m.x, m.y);
-        if (!result) continue;
-        let baseScore: number;
-        switch (m.type) {
-          case MonsterType.Purple:    baseScore = 85; break;
-          case MonsterType.Orange:    baseScore = 70; break;
-          case MonsterType.White:     baseScore = 60; break;
-          case MonsterType.LightBlue: baseScore = 50; break;
-          default: baseScore = 50;
-        }
-        const dist = Math.abs(bx - m.x) + Math.abs(by - m.y);
-        this.addScore(map, result.x, result.y, result.type, (baseScore + Math.max(0, 20 - dist)) * multiplier);
-      }
+      for (let d = 1; d <= 12; d++) {
+        const delta = AIPlayer.dirDelta(currentDir);
+        if (!delta) break;
+        cx += delta.dx;
+        cy += delta.dy;
 
-      for (const item of items) {
-        const result = this.findReflectorForTarget(bx, by, ball.direction, item.x, item.y);
-        if (!result) continue;
-        let baseScore: number;
-        switch (item.itemType) {
-          case DropItemType.ReflectorExpand: baseScore = 75; break;
-          case DropItemType.PowerUp:         baseScore = 65; break;
-          case DropItemType.BallCount:       baseScore = 60; break;
-          case DropItemType.SpeedUp:         baseScore = 45; break;
-          default: baseScore = 50;
+        const tile = this.simulator.map.getTile(cx, cy);
+        if (!tile || tile.isBlock) break;
+        if (this.simulator.getWall(cx, cy)) break;
+
+        // 기존 반사판이 있으면 방향을 꺾어 계속 진행 (설치 후보 아님)
+        const existingRef = this.simulator.map.reflectors.get(cx + cy * 100);
+        if (existingRef) {
+          currentDir = BallSimulator.getReflectedDirection(currentDir, existingRef.type);
+          continue;
         }
-        const dist = Math.abs(bx - item.x) + Math.abs(by - item.y);
-        this.addScore(map, result.x, result.y, result.type, (baseScore + Math.max(0, 15 - dist)) * multiplier);
+
+        if (!this.simulator.canPlaceReflector(this.playerId, cx, cy)) continue;
+
+        for (const rType of [ReflectorType.Slash, ReflectorType.Backslash]) {
+          const newDir = BallSimulator.getReflectedDirection(currentDir, rType);
+          const totalScore = this.computeMaxFarmScore(
+            cx, cy, newDir, monsterMap, itemMap,
+            /* bouncesLeft= */ 2, /* accScore= */ 0,
+          );
+          if (totalScore > 0) {
+            this.addScore(map, cx, cy, rType, totalScore * multiplier);
+          }
+        }
       }
     }
+  }
+
+  /**
+   * 경로 추적 + 재귀 바운스로 달성 가능한 최대 총 획득 점수를 계산.
+   * 반사판을 최대한 활용해 몬스터/아이템을 최대한 많이 획득하는 경로를 탐색.
+   *
+   * @param startX/Y    현재 반사판 위치
+   * @param dir         반사 후 방향
+   * @param monsterMap  O(1) 몬스터 조회용 좌표 맵
+   * @param itemMap     O(1) 아이템 조회용 좌표 맵
+   * @param bouncesLeft 이 지점부터 추가로 배치 가능한 반사판 수
+   * @param accScore    이전 구간까지 누적된 획득 점수
+   * @returns 이 경로에서 달성 가능한 최대 총 점수
+   */
+  private computeMaxFarmScore(
+    startX: number, startY: number, dir: Direction,
+    monsterMap: Map<string, ReturnType<BattleSimulator['getMonsters']>[0]>,
+    itemMap: Map<string, ReturnType<BattleSimulator['getDroppedItems']>[0]>,
+    bouncesLeft: number,
+    accScore: number,
+  ): number {
+    let currentDir = dir;
+    let segScore = 0;
+    let bestTotal = accScore;
+    let cx = startX, cy = startY;
+
+    for (let s = 1; s <= 12; s++) {
+      const delta = AIPlayer.dirDelta(currentDir);
+      if (!delta) break;
+      cx += delta.dx;
+      cy += delta.dy;
+
+      if (!this.isInOrNearMyZone(cx, cy, 2)) break;
+      const tile = this.simulator.map.getTile(cx, cy);
+      if (!tile || tile.isBlock) break;
+      if (this.simulator.getWall(cx, cy)) break;
+
+      segScore += this.getFarmCellScore(cx, cy, monsterMap, itemMap);
+      const totalSoFar = accScore + segScore;
+      if (totalSoFar > bestTotal) bestTotal = totalSoFar;
+
+      // 기존 반사판이 있으면 방향을 꺾어 계속 진행 (추가 설치 불가)
+      const existingRef = this.simulator.map.reflectors.get(cx + cy * 100);
+      if (existingRef) {
+        currentDir = BallSimulator.getReflectedDirection(currentDir, existingRef.type);
+        continue;
+      }
+
+      // 추가 반사판 배치 탐색
+      if (bouncesLeft > 0 && this.simulator.canPlaceReflector(this.playerId, cx, cy)) {
+        for (const rType of [ReflectorType.Slash, ReflectorType.Backslash]) {
+          const newDir = BallSimulator.getReflectedDirection(currentDir, rType);
+          const subTotal = this.computeMaxFarmScore(
+            cx, cy, newDir, monsterMap, itemMap,
+            bouncesLeft - 1, accScore + segScore,
+          );
+          if (subTotal > bestTotal) bestTotal = subTotal;
+        }
+      }
+    }
+
+    return bestTotal;
+  }
+
+  /** 특정 좌표의 몬스터/아이템 획득 점수 반환 (O(1) 맵 조회). */
+  private getFarmCellScore(
+    x: number, y: number,
+    monsterMap: Map<string, ReturnType<BattleSimulator['getMonsters']>[0]>,
+    itemMap: Map<string, ReturnType<BattleSimulator['getDroppedItems']>[0]>,
+  ): number {
+    let score = 0;
+    const monster = monsterMap.get(`${x},${y}`);
+    if (monster) {
+      switch (monster.type) {
+        case MonsterType.Purple:    score += 120; break;
+        case MonsterType.Orange:    score += 100; break;
+        case MonsterType.White:     score += 85;  break;
+        case MonsterType.LightBlue: score += 70;  break;
+        default:                    score += 70;
+      }
+    }
+    const item = itemMap.get(`${x},${y}`);
+    if (item) {
+      switch (item.itemType) {
+        case DropItemType.ReflectorExpand: score += 110; break;
+        case DropItemType.PowerUp:         score += 95;  break;
+        case DropItemType.BallCount:       score += 85;  break;
+        case DropItemType.SpeedUp:         score += 65;  break;
+        default:                           score += 70;
+      }
+    }
+    return score;
+  }
+
+  // ── 파밍 계획 (스폰 기준 전체 반사판 배치) ─────────────────────────────────
+
+  /**
+   * 스폰 포인트에서 출발하는 공의 경로를 기준으로
+   * 모든 반사판 슬롯을 사용해 최대 몬스터/아이템을 수집하는 배치를 계획.
+   *
+   * 알고리즘: 탐욕(Greedy) — 한 번에 하나씩, 가장 점수 높은 반사판을 배치.
+   * 각 라운드마다 모든 스폰 경로를 재추적하여 다음 최적 위치를 선정.
+   */
+  private planFarmLayout(): { x: number; y: number; type: ReflectorType }[] {
+    const spawns = this.getMySpawns();
+    if (spawns.length === 0) return [];
+
+    const maxReflectors = this.simulator.getEffectiveMaxReflectors(this.playerId);
+    if (maxReflectors <= 0) return [];
+
+    // 타겟 맵 구성 (몬스터 + 아이템)
+    const rawMonsters = this.simulator.getMonsters().filter(m => m.active && this.isInOrNearMyZone(m.x, m.y, 2));
+    const rawItems = this.simulator.getDroppedItems().filter(i => this.isInOrNearMyZone(i.x, i.y, 2));
+    if (rawMonsters.length === 0 && rawItems.length === 0) return [];
+
+    const monsterMap = new Map<string, typeof rawMonsters[0]>();
+    for (const m of rawMonsters) monsterMap.set(`${m.x},${m.y}`, m);
+    const itemMap = new Map<string, typeof rawItems[0]>();
+    for (const i of rawItems) itemMap.set(`${i.x},${i.y}`, i);
+
+    const placements: { x: number; y: number; type: ReflectorType }[] = [];
+    const placedSet = new Set<string>();
+
+    // 탐욕 반복: 매 라운드마다 최적 반사판 1개 선정
+    for (let round = 0; round < maxReflectors; round++) {
+      let bestPlacement: { x: number; y: number; type: ReflectorType } | null = null;
+      let bestScore = 0;
+
+      for (const spawn of spawns) {
+        // 스폰에서 출발, 기존 맵 반사판 무시, 계획된 반사판만 반영한 경로
+        const pathTiles = this.traceFarmPath(
+          spawn.tile.x, spawn.tile.y, spawn.spawnDirection, placements,
+        );
+
+        for (const pt of pathTiles) {
+          if (placedSet.has(`${pt.x},${pt.y}`)) continue;
+          if (!this.canPlaceFarmReflector(pt.x, pt.y)) continue;
+
+          for (const rType of [ReflectorType.Slash, ReflectorType.Backslash]) {
+            const newDir = BallSimulator.getReflectedDirection(pt.dir, rType);
+            if (newDir === pt.dir) continue; // 변화 없으면 스킵
+
+            const score = this.scoreFarmPathSegment(
+              pt.x, pt.y, newDir, monsterMap, itemMap, placements,
+            );
+            if (score > bestScore) {
+              bestScore = score;
+              bestPlacement = { x: pt.x, y: pt.y, type: rType };
+            }
+          }
+        }
+      }
+
+      if (!bestPlacement || bestScore <= 0) break;
+      placements.push(bestPlacement);
+      placedSet.add(`${bestPlacement.x},${bestPlacement.y}`);
+    }
+
+    return placements;
+  }
+
+  /**
+   * 기존 맵 반사판을 무시하고, 계획된 반사판만 반영하여 공 경로를 추적.
+   * 각 타일에서의 진입 방향(dir)을 함께 반환하여 반사판 배치 후보로 사용.
+   */
+  private traceFarmPath(
+    startX: number, startY: number, dir: Direction,
+    placements: { x: number; y: number; type: ReflectorType }[],
+  ): { x: number; y: number; dir: Direction }[] {
+    const plannedMap = new Map<string, ReflectorType>();
+    for (const p of placements) plannedMap.set(`${p.x},${p.y}`, p.type);
+
+    const path: { x: number; y: number; dir: Direction }[] = [];
+    let cx = startX, cy = startY, currentDir = dir;
+    const visited = new Set<string>();
+
+    for (let step = 0; step < 30; step++) {
+      const delta = AIPlayer.dirDelta(currentDir);
+      if (!delta) break;
+      cx += delta.dx;
+      cy += delta.dy;
+
+      // 맵 경계/장애물 체크
+      const tile = this.simulator.map.getTile(cx, cy);
+      if (!tile || tile.isBlock) break;
+      if (this.simulator.getWall(cx, cy)) break;
+
+      // 루프 감지
+      const visitKey = `${cx},${cy},${currentDir}`;
+      if (visited.has(visitKey)) break;
+      visited.add(visitKey);
+
+      // 계획된 반사판이 있으면 방향 변경 (배치 후보 아님)
+      const plannedType = plannedMap.get(`${cx},${cy}`);
+      if (plannedType !== undefined) {
+        currentDir = BallSimulator.getReflectedDirection(currentDir, plannedType);
+        continue;
+      }
+
+      // 배치 후보 타일 (현재 진입 방향 포함)
+      path.push({ x: cx, y: cy, dir: currentDir });
+    }
+
+    return path;
+  }
+
+  /**
+   * 반사 후 경로를 따라가며 몬스터/아이템 점수를 합산.
+   * 계획된 반사판은 경로 반영, 맵 반사판은 무시.
+   */
+  private scoreFarmPathSegment(
+    fromX: number, fromY: number, dir: Direction,
+    monsterMap: Map<string, ReturnType<BattleSimulator['getMonsters']>[0]>,
+    itemMap: Map<string, ReturnType<BattleSimulator['getDroppedItems']>[0]>,
+    placements: { x: number; y: number; type: ReflectorType }[],
+  ): number {
+    const plannedMap = new Map<string, ReflectorType>();
+    for (const p of placements) plannedMap.set(`${p.x},${p.y}`, p.type);
+
+    let score = 0;
+    let cx = fromX, cy = fromY, currentDir = dir;
+
+    for (let step = 0; step < 20; step++) {
+      const delta = AIPlayer.dirDelta(currentDir);
+      if (!delta) break;
+      cx += delta.dx;
+      cy += delta.dy;
+
+      const tile = this.simulator.map.getTile(cx, cy);
+      if (!tile || tile.isBlock) break;
+      if (this.simulator.getWall(cx, cy)) break;
+
+      score += this.getFarmCellScore(cx, cy, monsterMap, itemMap);
+
+      // 계획된 반사판 반영
+      const plannedType = plannedMap.get(`${cx},${cy}`);
+      if (plannedType !== undefined) {
+        currentDir = BallSimulator.getReflectedDirection(currentDir, plannedType);
+      }
+    }
+
+    return score;
+  }
+
+  /** 파밍 계획용 설치 가능 여부 (몬스터 점유 무시 — 공이 도착할 때 이미 사라질 수 있음) */
+  private canPlaceFarmReflector(x: number, y: number): boolean {
+    if (!this.simulator.isZoneAccessible(this.playerId, x, y)) return false;
+    if (this.simulator.isEnemySpawnZone(this.playerId, x, y)) return false;
+    if (this.simulator.getWall(x, y)) return false;
+    const tile = this.simulator.map.getTile(x, y);
+    if (!tile || !tile.isReflectorSetable) return false;
+    return true;
+  }
+
+  /**
+   * 파밍 계획을 보드에 실행. 한 틱에 하나씩 배치.
+   * - 이미 올바르게 배치된 반사판은 건너뜀
+   * - 같은 위치 타입 다르면 교체 (무료)
+   * - 새 위치면 스톡 소비 (FIFO로 오래된 것 자동 제거)
+   * @returns true면 이번 틱에 배치 완료 (더 이상 행동 불필요)
+   */
+  private executeFarmPlan(): boolean {
+    if (this.farmPlan.length === 0) return false;
+
+    // Phase 1: 같은 위치 타입 교체 (무료)
+    for (const p of this.farmPlan) {
+      const tileIndex = p.x + p.y * 100;
+      const existing = this.simulator.map.reflectors.get(tileIndex);
+      if (existing && existing.playerId === this.playerId && existing.type !== p.type) {
+        this.simulator.placeReflector(this.playerId, p.x, p.y, p.type);
+        return true;
+      }
+    }
+
+    // Phase 2: 새 위치 배치 (스톡 소비)
+    const stock = this.simulator.getReflectorStock(this.playerId);
+    if (stock <= 0) return false;
+
+    for (const p of this.farmPlan) {
+      const tileIndex = p.x + p.y * 100;
+      const existing = this.simulator.map.reflectors.get(tileIndex);
+      if (existing && existing.playerId === this.playerId) continue; // 이미 정확히 배치됨
+
+      // 설치 가능 여부 재확인 (몬스터가 이동했을 수 있음)
+      if (!this.simulator.canPlaceReflector(this.playerId, p.x, p.y)) continue;
+      this.simulator.placeReflector(this.playerId, p.x, p.y, p.type);
+      return true;
+    }
+
+    return false; // 모든 계획 실행 완료
   }
 
   /**
@@ -847,6 +1178,64 @@ export class AIPlayer {
     }
   }
 
+  // ── 골드 소비 ─────────────────────────────────────────────────────────────
+
+  private trySpendGold(): void {
+    const gold = this.simulator.getPlayerGold(this.playerId);
+
+    // 방패 우선: 300g 이상이고 위기 구조물 있을 때
+    if (gold >= this.simulator.config.shieldCostGold && this.tryShield()) return;
+
+    // 검: 30g 이상 쌓이면 적 반사판 제거 (저렴하므로 적극 사용)
+    if (gold >= this.simulator.config.swordCostGold * 3) this.trySword();
+  }
+
+  private trySword(): void {
+    const enemyCore = this.getWeakestEnemyCore();
+    let bestTarget: { x: number; y: number; priority: number } | null = null;
+
+    for (const [, placement] of this.simulator.map.reflectors) {
+      if (placement.playerId === this.playerId) continue;
+
+      let priority = 0;
+      // 적 코어 근처 반사판 우선 제거 (방어력 약화)
+      if (enemyCore) {
+        const distToCore = Math.abs(placement.x - enemyCore.tile.x) + Math.abs(placement.y - enemyCore.tile.y);
+        priority += Math.max(0, 20 - distToCore * 2);
+      }
+      // 내 존과 가까울수록 우선 (내 공이 직접 닿을 수 있는 위치)
+      const distToZone = this.distToMyZoneBorder(placement.x, placement.y);
+      priority += Math.max(0, 10 - distToZone);
+
+      if (!bestTarget || priority > bestTarget.priority) {
+        bestTarget = { x: placement.x, y: placement.y, priority };
+      }
+    }
+
+    if (bestTarget) {
+      this.simulator.useSword(this.playerId, bestTarget.x, bestTarget.y);
+    }
+  }
+
+  private tryShield(): boolean {
+    let bestTarget: { targetType: 'spawn' | 'core'; id: string; urgency: number } | null = null;
+
+    const myCore = this.getMyCore();
+    if (myCore && myCore.hp / myCore.maxHp < 0.4) {
+      bestTarget = { targetType: 'core', id: myCore.id.toString(), urgency: 1 - myCore.hp / myCore.maxHp };
+    }
+
+    for (const sp of this.getMySpawns()) {
+      const urgency = 1 - sp.hp / sp.maxHp;
+      if (urgency > 0.5 && (!bestTarget || urgency > bestTarget.urgency)) {
+        bestTarget = { targetType: 'spawn', id: sp.id.toString(), urgency };
+      }
+    }
+
+    if (!bestTarget) return false;
+    return this.simulator.useShield(this.playerId, bestTarget.targetType, bestTarget.id);
+  }
+
   // 스코어링에서 후보가 없을 때 코어 근처 무작위 배치
   private placeStrategicFallback(): void {
     const myCore = this.getMyCore();
@@ -911,6 +1300,17 @@ export class AIPlayer {
   private isInMyZone(x: number, y: number): boolean {
     return x >= this.zone.originX && x < this.zone.originX + this.zone.width &&
            y >= this.zone.originY && y < this.zone.originY + this.zone.height;
+  }
+
+  private isInOrNearMyZone(x: number, y: number, margin: number): boolean {
+    return x >= this.zone.originX - margin && x < this.zone.originX + this.zone.width + margin &&
+           y >= this.zone.originY - margin && y < this.zone.originY + this.zone.height + margin;
+  }
+
+  private distToMyZoneBorder(x: number, y: number): number {
+    const dx = Math.max(0, this.zone.originX - x, x - (this.zone.originX + this.zone.width - 1));
+    const dy = Math.max(0, this.zone.originY - y, y - (this.zone.originY + this.zone.height - 1));
+    return dx + dy;
   }
 
   private static isDirectlyHeading(
