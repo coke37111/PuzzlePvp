@@ -1937,8 +1937,14 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onReflectorRemoved = (msg: ReflectorRemovedMsg) => {
-      if (msg.playerId === this.myPlayerId) return; // 내 것은 이미 낙관적으로 제거됨
-      this.sfx.reflectorRemove();
+      if (msg.playerId === this.myPlayerId) {
+        // 수동 제거: 낙관적으로 이미 처리됨 → 비주얼이 없으면 스킵
+        // FIFO 자동 제거: 서버가 오래된 것을 제거 → 비주얼이 있으면 제거 필요
+        const key = `${msg.x},${msg.y}`;
+        if (!this.reflectorVisuals.has(key)) return;
+      } else {
+        this.sfx.reflectorRemove();
+      }
       this.removeReflectorVisual(msg.x, msg.y);
       this.updateReflectorCount();
     };
