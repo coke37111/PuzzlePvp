@@ -2503,9 +2503,9 @@ export class GameScene extends Phaser.Scene {
       .setDepth(4);
     this.tilesLayer.add(lockOverlay);
 
-    // HP 바
+    // HP 바 (잠긴 상태에서는 숨김)
     const hpBarBg = this.add.rectangle(px, py + S / 2 - HP_BAR_HEIGHT, S - 4, HP_BAR_HEIGHT, 0x333333)
-      .setOrigin(0.5).setDepth(4);
+      .setOrigin(0.5).setDepth(4).setVisible(false);
     this.tilesLayer.add(hpBarBg);
 
     const ratio = hp / maxHp;
@@ -2514,13 +2514,13 @@ export class GameScene extends Phaser.Scene {
       px - fullW / 2 * (1 - ratio),
       py + S / 2 - HP_BAR_HEIGHT,
       fullW * ratio, HP_BAR_HEIGHT, 0xffaa22,
-    ).setOrigin(0.5).setDepth(4);
+    ).setOrigin(0.5).setDepth(4).setVisible(false);
     this.tilesLayer.add(hpBar);
 
     const hpText = this.add.text(px, py - S * 0.12, this.formatHp(hp), {
       fontSize: '10px', color: '#ffffff', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 2,
-    }).setOrigin(0.5).setDepth(5);
+    }).setOrigin(0.5).setDepth(5).setVisible(false);
     this.tilesLayer.add(hpText);
 
     this.towerBoxVisuals.set(spawnId, { bg, lockOverlay, hpBar, hpBarBg, hpText, spawnId, maxHp, currentHp: hp });
@@ -2532,6 +2532,13 @@ export class GameScene extends Phaser.Scene {
 
     const damage = visual.currentHp - hp;
     visual.currentHp = hp;
+
+    // 첫 데미지 시 HP 바 표시
+    if (damage > 0) {
+      visual.hpBar.setVisible(true);
+      visual.hpBarBg.setVisible(true);
+      visual.hpText.setVisible(true);
+    }
 
     const ratio = hp / maxHp;
     const S = TILE_SIZE - 2;
