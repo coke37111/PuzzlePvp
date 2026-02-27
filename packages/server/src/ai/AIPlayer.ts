@@ -1045,14 +1045,27 @@ export class AIPlayer {
   }
 
   /**
-   * 파밍 계획을 보드에 실행. 한 틱에 하나씩 배치.
-   * - 이미 올바르게 배치된 반사판은 건너뜀
-   * - 같은 위치 타입 다르면 교체 (무료)
-   * - 새 위치면 스톡 소비 (FIFO로 오래된 것 자동 제거)
-   * @returns true면 이번 틱에 배치 완료 (더 이상 행동 불필요)
+   * 파밍 계획을 보드에 실행. 한 틱에 하나씩 행동.
+   * Phase 0: 계획에 없는 기존 반사판 제거 (슬롯 확보)
+   * Phase 1: 같은 위치 타입 교체 (무료)
+   * Phase 2: 새 위치 배치 (스톡 소비)
+   * @returns true면 이번 틱에 행동 완료
    */
   private executeFarmPlan(): boolean {
     if (this.farmPlan.length === 0) return false;
+
+    const planSet = new Set(this.farmPlan.map(p => p.x + p.y * 100));
+
+    // Phase 0: 계획에 없는 기존 반사판 제거 (위치 재배치를 위해 슬롯 확보)
+    for (const [tileIndex, placement] of this.simulator.map.reflectors) {
+      if (placement.playerId !== this.playerId) continue;
+      if (planSet.has(tileIndex)) continue;
+      // 계획에 없는 반사판 → 제거
+      const rx = tileIndex % 100;
+      const ry = Math.floor(tileIndex / 100);
+      this.simulator.removeReflector(this.playerId, rx, ry);
+      return true;
+    }
 
     // Phase 1: 같은 위치 타입 교체 (무료)
     for (const p of this.farmPlan) {
@@ -1073,7 +1086,6 @@ export class AIPlayer {
       const existing = this.simulator.map.reflectors.get(tileIndex);
       if (existing && existing.playerId === this.playerId) continue; // 이미 정확히 배치됨
 
-      // 설치 가능 여부 재확인 (몬스터가 이동했을 수 있음)
       if (!this.simulator.canPlaceReflector(this.playerId, p.x, p.y)) continue;
       this.simulator.placeReflector(this.playerId, p.x, p.y, p.type);
       return true;
