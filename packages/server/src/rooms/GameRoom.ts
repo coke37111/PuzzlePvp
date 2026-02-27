@@ -45,6 +45,7 @@ import {
   SpawnHealedMsg,
   CoreHealedMsg,
   PlayerEliminatedMsg,
+  PlayerLeftMsg,
   TowerBoxDamagedMsg,
   TowerBoxBrokenMsg,
   OwnershipTransferredMsg,
@@ -429,7 +430,25 @@ export class GameRoom {
       socket.on('disconnect', () => {
         if (!this.tickTimer) return;  // 이미 종료된 게임 무시
         console.log(`[GameRoom ${this.id}] 플레이어 ${playerId} 연결 끊김`);
-        this.simulator.eliminatePlayer(playerId);
+
+        if (this.layout) {
+          // N인 모드: AI가 인계, 게임 계속 진행
+          const zone = this.layout.zones.find(z => z.playerId === playerId);
+          if (zone) {
+            this.aiPlayers.push(new AIPlayer(playerId, this.simulator, zone));
+            this.players.set(playerId, null);
+          }
+          // 나머지 클라이언트에 딤드 알림
+          const leftMsg: PlayerLeftMsg = { playerId };
+          for (const [pid, sock] of this.players) {
+            if (sock && pid !== playerId) {
+              sock.emit(SocketEvent.PLAYER_LEFT, leftMsg);
+            }
+          }
+        } else {
+          // 레거시 모드: 탈락 처리
+          this.simulator.eliminatePlayer(playerId);
+        }
       });
     }
 

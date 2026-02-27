@@ -50,6 +50,7 @@ import {
   TowerBoxDamagedMsg,
   TowerBoxBrokenMsg,
   OwnershipTransferredMsg,
+  PlayerLeftMsg,
 } from '@puzzle-pvp/shared';
 
 import {
@@ -114,7 +115,7 @@ interface ItemVisual {
 
 interface SpawnVisual {
   id: number;
-  bg: Phaser.GameObjects.Rectangle;
+  bg: Phaser.GameObjects.Shape;
   hpBar: Phaser.GameObjects.Rectangle;
   hpBarBg: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
@@ -167,8 +168,7 @@ interface WallVisual {
 
 interface TowerBoxVisual {
   bg: Phaser.GameObjects.Rectangle;
-  crossA: Phaser.GameObjects.Graphics;
-  crossB: Phaser.GameObjects.Graphics;
+  lockOverlay: Phaser.GameObjects.Rectangle;
   hpBar: Phaser.GameObjects.Rectangle;
   hpBarBg: Phaser.GameObjects.Rectangle;
   hpText: Phaser.GameObjects.Text;
@@ -768,18 +768,17 @@ export class GameScene extends Phaser.Scene {
 
     if (!this.layout) return;
 
-    const myZone = this.layout.zones.find(z => z.playerId === this.myPlayerId);
-    if (!myZone) return;
+    // 내 모든 존 (원래 존 + 점령한 존)
+    const myZones = this.layout.zones.filter(z =>
+      z.playerId === this.myPlayerId || this.capturedZones.get(z.playerId) === this.myPlayerId
+    );
+    if (myZones.length === 0) return;
 
     const { zoneSize, wallThickness } = this.layout;
 
     for (const zone of this.layout.zones) {
-      if (zone.playerId === this.myPlayerId) continue;
-      // 점령한 구역은 접근 가능
-      if (this.capturedZones.get(zone.playerId) === this.myPlayerId) continue;
-
-      const dcol = zone.zoneCol - myZone.zoneCol;
-      const drow = zone.zoneRow - myZone.zoneRow;
+      // 내 구역(원래 + 점령)은 항상 접근 가능
+      if (myZones.includes(zone)) continue;
 
       for (let ly = 0; ly < zone.height; ly++) {
         for (let lx = 0; lx < zone.width; lx++) {
@@ -787,26 +786,34 @@ export class GameScene extends Phaser.Scene {
           const wy = zone.originY + ly;
           let accessible = false;
 
-          if (dcol !== 0 && drow === 0) {
-            // 수평 인접: 해당 y 행의 모든 격벽 파괴 여부 확인
-            const startCol = Math.min(myZone.zoneCol, zone.zoneCol);
-            const endCol   = Math.max(myZone.zoneCol, zone.zoneCol);
-            accessible = true;
-            for (let col = startCol; col < endCol; col++) {
-              const wallX = col * (zoneSize + wallThickness) + zoneSize;
-              if (this.wallVisuals.has(`${wallX},${wy}`)) { accessible = false; break; }
+          // 내 모든 존에서 이 타일로 직선 접근 가능한지 확인
+          for (const myZone of myZones) {
+            const dcol = zone.zoneCol - myZone.zoneCol;
+            const drow = zone.zoneRow - myZone.zoneRow;
+
+            if (dcol !== 0 && drow === 0) {
+              // 수평 인접: 해당 y 행의 모든 격벽 파괴 여부 확인
+              const startCol = Math.min(myZone.zoneCol, zone.zoneCol);
+              const endCol   = Math.max(myZone.zoneCol, zone.zoneCol);
+              let blocked = false;
+              for (let col = startCol; col < endCol; col++) {
+                const wallX = col * (zoneSize + wallThickness) + zoneSize;
+                if (this.wallVisuals.has(`${wallX},${wy}`)) { blocked = true; break; }
+              }
+              if (!blocked) { accessible = true; break; }
+            } else if (drow !== 0 && dcol === 0) {
+              // 수직 인접: 해당 x 열의 모든 격벽 파괴 여부 확인
+              const startRow = Math.min(myZone.zoneRow, zone.zoneRow);
+              const endRow   = Math.max(myZone.zoneRow, zone.zoneRow);
+              let blocked = false;
+              for (let row = startRow; row < endRow; row++) {
+                const wallY = row * (zoneSize + wallThickness) + zoneSize;
+                if (this.wallVisuals.has(`${wx},${wallY}`)) { blocked = true; break; }
+              }
+              if (!blocked) { accessible = true; break; }
             }
-          } else if (drow !== 0 && dcol === 0) {
-            // 수직 인접: 해당 x 열의 모든 격벽 파괴 여부 확인
-            const startRow = Math.min(myZone.zoneRow, zone.zoneRow);
-            const endRow   = Math.max(myZone.zoneRow, zone.zoneRow);
-            accessible = true;
-            for (let row = startRow; row < endRow; row++) {
-              const wallY = row * (zoneSize + wallThickness) + zoneSize;
-              if (this.wallVisuals.has(`${wx},${wallY}`)) { accessible = false; break; }
-            }
+            // dcol≠0 && drow≠0 → 이 존에서 대각선 = 다음 존 시도
           }
-          // dcol≠0 && drow≠0 → 대각선 = accessible 유지 false
 
           if (!accessible) {
             this.inaccessibleZoneTiles.add(`${wx},${wy}`);
@@ -847,7 +854,8 @@ export class GameScene extends Phaser.Scene {
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
 
-    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, this.getTeamColorDark(ownerId), 0.4);
+    const spawnRadius = (TILE_SIZE - 2) * 0.4; // 원형, 크기 20% 감소
+    const bg = this.add.circle(px, py, spawnRadius, this.getTeamColorDark(ownerId), 0.9);
     this.tilesLayer.add(bg);
 
     // HP 바 배경
@@ -1879,7 +1887,7 @@ export class GameScene extends Phaser.Scene {
       visual.currentHp = msg.hp;
 
       // 비주얼 복구
-      visual.bg.setFillStyle(this.getTeamColorDark(visual.ownerId), 0.4);
+      visual.bg.setFillStyle(this.getTeamColorDark(visual.ownerId), 0.9);
       visual.bg.setAlpha(1);
       visual.hpBar.setVisible(true);
       visual.hpBarBg.setVisible(true);
@@ -1944,8 +1952,18 @@ export class GameScene extends Phaser.Scene {
 
     this.socket.onPlayerEliminated = (msg) => {
       this.remainingPlayersText?.setText(`${msg.remainingPlayers}/${this.totalPlayerCount}명`);
-      // 탈락 존 시각적 표시 (N인 모드, 자신 제외)
+      // 탈락 존 시각적 표시 (N인 모드, 자신 제외, 내가 점령한 존 제외)
       if (this.layout && msg.playerId !== this.myPlayerId) {
+        if (this.capturedZones.get(msg.playerId) === this.myPlayerId) return;
+        const zone = this.layout.zones.find(z => z.playerId === msg.playerId);
+        if (zone) this.showEliminatedZoneOverlay(zone.originX, zone.originY, zone.width, zone.height);
+      }
+    };
+
+    this.socket.onPlayerLeft = (msg: PlayerLeftMsg) => {
+      // 게임 이탈 유저 딤드 처리 (N인 모드, 자신 제외, 내가 점령한 존 제외)
+      if (this.layout && msg.playerId !== this.myPlayerId) {
+        if (this.capturedZones.get(msg.playerId) === this.myPlayerId) return;
         const zone = this.layout.zones.find(z => z.playerId === msg.playerId);
         if (zone) this.showEliminatedZoneOverlay(zone.originX, zone.originY, zone.width, zone.height);
       }
@@ -2002,7 +2020,7 @@ export class GameScene extends Phaser.Scene {
           // 카운트다운 정리
           this.clearSpawnCountdown(spVisual);
           spVisual.destroyed = false;
-          spVisual.bg.setFillStyle(this.getTeamColorDark(msg.newOwnerId), 0.4);
+          spVisual.bg.setFillStyle(this.getTeamColorDark(msg.newOwnerId), 0.9);
           spVisual.bg.setAlpha(1);
           spVisual.hpBar.setVisible(true);
           spVisual.hpBarBg.setVisible(true);
@@ -2475,27 +2493,15 @@ export class GameScene extends Phaser.Scene {
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
     const S = TILE_SIZE - 2;
 
-    // 크레이트 배경 (짙은 갈색)
-    const bg = this.add.rectangle(px, py, S, S, 0x7a4a1a, 0.92)
-      .setStrokeStyle(2, 0xcc8833, 1).setDepth(3);
+    // 타워 박스 배경 (스폰 타워 위 반투명 검은색 커버)
+    const bg = this.add.rectangle(px, py, S, S, 0x000000, 0)
+      .setDepth(3);
     this.tilesLayer.add(bg);
 
-    // X자 표시 (잠금 아이콘)
-    const crossA = this.add.graphics().setDepth(4);
-    crossA.lineStyle(3, 0xddaa44, 0.8);
-    crossA.beginPath();
-    crossA.moveTo(px - S * 0.3, py - S * 0.3);
-    crossA.lineTo(px + S * 0.3, py + S * 0.3);
-    crossA.strokePath();
-    this.tilesLayer.add(crossA);
-
-    const crossB = this.add.graphics().setDepth(4);
-    crossB.lineStyle(3, 0xddaa44, 0.8);
-    crossB.beginPath();
-    crossB.moveTo(px + S * 0.3, py - S * 0.3);
-    crossB.lineTo(px - S * 0.3, py + S * 0.3);
-    crossB.strokePath();
-    this.tilesLayer.add(crossB);
+    // 잠금 오버레이 (반투명 검은색, 스폰 타워와 화살표는 아래에 보임)
+    const lockOverlay = this.add.rectangle(px, py, S, S, 0x000000, 0.55)
+      .setDepth(4);
+    this.tilesLayer.add(lockOverlay);
 
     // HP 바
     const hpBarBg = this.add.rectangle(px, py + S / 2 - HP_BAR_HEIGHT, S - 4, HP_BAR_HEIGHT, 0x333333)
@@ -2517,7 +2523,7 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(5);
     this.tilesLayer.add(hpText);
 
-    this.towerBoxVisuals.set(spawnId, { bg, crossA, crossB, hpBar, hpBarBg, hpText, spawnId, maxHp, currentHp: hp });
+    this.towerBoxVisuals.set(spawnId, { bg, lockOverlay, hpBar, hpBarBg, hpText, spawnId, maxHp, currentHp: hp });
   }
 
   private updateTowerBoxHp(spawnId: number, hp: number, maxHp: number): void {
@@ -2549,7 +2555,7 @@ export class GameScene extends Phaser.Scene {
     if (!visual) return;
 
     this.tweens.add({
-      targets: [visual.bg, visual.crossA, visual.crossB, visual.hpBar, visual.hpBarBg, visual.hpText],
+      targets: [visual.bg, visual.lockOverlay, visual.hpBar, visual.hpBarBg, visual.hpText],
       alpha: 0,
       scaleX: 1.4,
       scaleY: 1.4,
@@ -2557,8 +2563,7 @@ export class GameScene extends Phaser.Scene {
       ease: 'Sine.easeOut',
       onComplete: () => {
         visual.bg.destroy();
-        visual.crossA.destroy();
-        visual.crossB.destroy();
+        visual.lockOverlay.destroy();
         visual.hpBar.destroy();
         visual.hpBarBg.destroy();
         visual.hpText.destroy();

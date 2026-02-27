@@ -47,7 +47,7 @@ export type {
   ItemDroppedMsg, ItemPickedUpMsg, BallPoweredUpMsg,
   PlayerBallCountUpMsg, PlayerSpeedUpMsg, PlayerReflectorExpandMsg,
   SpawnHealedMsg, CoreHealedMsg,
-  LobbyUpdateMsg, PlayerEliminatedMsg,
+  LobbyUpdateMsg, PlayerEliminatedMsg, PlayerLeftMsg,
   TowerBoxInfo, TowerBoxDamagedMsg, TowerBoxBrokenMsg,
   SetTargetPlayersMsg, OwnershipTransferredMsg,
 } from './types/NetworkMessage';

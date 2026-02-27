@@ -142,7 +142,7 @@ export function animHpBar(
 /** 데미지 플래시 (배경 빨간 플래시) */
 export function animDamageFlash(
   scene: Phaser.Scene,
-  bg: Phaser.GameObjects.Rectangle,
+  bg: Phaser.GameObjects.Shape,
   originalColor: number,
   originalAlpha: number,
 ): void {
@@ -152,12 +152,12 @@ export function animDamageFlash(
   });
 }
 
-type Movable = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Graphics;
+type Movable = Phaser.GameObjects.Shape | Phaser.GameObjects.Text | Phaser.GameObjects.Graphics;
 
 /** 스폰포인트/코어 파괴 애니메이션: 흔들림 + 페이드 */
 export function animSpawnDestroy(
   scene: Phaser.Scene,
-  bg: Phaser.GameObjects.Rectangle,
+  bg: Phaser.GameObjects.Shape,
   hpBar: Phaser.GameObjects.Rectangle,
   hpBarBg: Phaser.GameObjects.Rectangle,
   label: Phaser.GameObjects.Text,

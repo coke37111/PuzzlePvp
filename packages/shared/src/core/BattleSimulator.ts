@@ -808,6 +808,14 @@ export class BattleSimulator {
     // 점령 기록
     this.capturedZones.set(oldOwnerId, newOwnerId);
 
+    // 점령당한 플레이어 탈락 이벤트
+    const alivePlayerIds = new Set<number>();
+    for (const core of this.cores) {
+      if (core.active) alivePlayerIds.add(core.ownerId);
+    }
+    const eliminatedTeamId = this.playerZones.get(oldOwnerId)?.teamId ?? oldOwnerId;
+    this.onPlayerEliminated?.(oldOwnerId, eliminatedTeamId, alivePlayerIds.size);
+
     // 콜백 알림
     this.onOwnershipTransferred?.(
       oldOwnerId, newOwnerId, destroyedCore.id,
@@ -915,22 +923,29 @@ export class BattleSimulator {
 
   /**
    * (x,y)가 playerId 기준으로 설치 가능한 구역인지 확인.
-   * - 자신의 구역: 항상 가능
-   * - 점령한 구역: 항상 가능
-   * - 인접 구역(직선): 격벽이 파괴된 행/열만 가능
+   * - 자신의 구역 + 점령한 구역: 항상 가능
+   * - 위 구역들에서 인접 구역(직선): 격벽이 파괴된 행/열만 가능
    * - 대각선 구역: 불가
    */
   isZoneAccessible(playerId: number, x: number, y: number): boolean {
     const layout = this.map.rawData?.layout;
     if (!layout) return true; // 레거시 모드: 제한 없음
 
-    const myZone = this.playerZones.get(playerId);
-    if (!myZone) return true;
+    // 내 모든 구역 (원래 존 + 점령한 존)
+    const myZones: PlayerZone[] = [];
+    for (const [pid, zone] of this.playerZones) {
+      if (pid === playerId || this.capturedZones.get(pid) === playerId) {
+        myZones.push(zone);
+      }
+    }
+    if (myZones.length === 0) return true;
 
-    // 자기 구역
-    if (x >= myZone.originX && x < myZone.originX + myZone.width &&
-        y >= myZone.originY && y < myZone.originY + myZone.height) {
-      return true;
+    // 자기 구역 or 점령 구역인지 확인
+    for (const mz of myZones) {
+      if (x >= mz.originX && x < mz.originX + mz.width &&
+          y >= mz.originY && y < mz.originY + mz.height) {
+        return true;
+      }
     }
 
     // 대상 구역 탐색
@@ -944,34 +959,38 @@ export class BattleSimulator {
     }
     if (!targetZone) return false; // 격벽 타일 위 (반사판 불가)
 
-    // 점령한 구역이면 항상 가능
-    if (this.capturedZones.get(targetZone.playerId) === playerId) return true;
-
-    const dcol = targetZone.zoneCol - myZone.zoneCol;
-    const drow = targetZone.zoneRow - myZone.zoneRow;
-    if (dcol !== 0 && drow !== 0) return false; // 대각선 방향 = 직선 불가
-
     const { zoneSize, wallThickness } = layout;
 
-    if (dcol !== 0) {
-      // 수평 이동: x 방향으로 격벽 통과 → 해당 y 행의 격벽이 모두 파괴되어야 함
-      const startCol = Math.min(myZone.zoneCol, targetZone.zoneCol);
-      const endCol   = Math.max(myZone.zoneCol, targetZone.zoneCol);
-      for (let col = startCol; col < endCol; col++) {
-        const wallX = col * (zoneSize + wallThickness) + zoneSize;
-        if (this.walls.has(`${wallX},${y}`)) return false;
+    // 내 모든 존에서 targetZone까지 직선 접근 가능한지 체크
+    for (const myZone of myZones) {
+      const dcol = targetZone.zoneCol - myZone.zoneCol;
+      const drow = targetZone.zoneRow - myZone.zoneRow;
+      if (dcol !== 0 && drow !== 0) continue; // 이 존에서 대각선 = 불가
+
+      if (dcol !== 0) {
+        // 수평 이동: 해당 y 행의 격벽이 모두 파괴되어야 함
+        const startCol = Math.min(myZone.zoneCol, targetZone.zoneCol);
+        const endCol   = Math.max(myZone.zoneCol, targetZone.zoneCol);
+        let blocked = false;
+        for (let col = startCol; col < endCol; col++) {
+          const wallX = col * (zoneSize + wallThickness) + zoneSize;
+          if (this.walls.has(`${wallX},${y}`)) { blocked = true; break; }
+        }
+        if (!blocked) return true;
+      } else {
+        // 수직 이동: 해당 x 열의 격벽이 모두 파괴되어야 함
+        const startRow = Math.min(myZone.zoneRow, targetZone.zoneRow);
+        const endRow   = Math.max(myZone.zoneRow, targetZone.zoneRow);
+        let blocked = false;
+        for (let row = startRow; row < endRow; row++) {
+          const wallY = row * (zoneSize + wallThickness) + zoneSize;
+          if (this.walls.has(`${x},${wallY}`)) { blocked = true; break; }
+        }
+        if (!blocked) return true;
       }
-      return true;
-    } else {
-      // 수직 이동: y 방향으로 격벽 통과 → 해당 x 열의 격벽이 모두 파괴되어야 함
-      const startRow = Math.min(myZone.zoneRow, targetZone.zoneRow);
-      const endRow   = Math.max(myZone.zoneRow, targetZone.zoneRow);
-      for (let row = startRow; row < endRow; row++) {
-        const wallY = row * (zoneSize + wallThickness) + zoneSize;
-        if (this.walls.has(`${x},${wallY}`)) return false;
-      }
-      return true;
     }
+
+    return false;
   }
 
   placeReflector(playerId: number, x: number, y: number, type: ReflectorType): boolean {

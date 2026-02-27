@@ -340,6 +340,11 @@ export interface PlayerEliminatedMsg {
   remainingPlayers: number;
 }
 
+// 플레이어가 게임 도중 나감 (AI가 인계, 탈락과 다름)
+export interface PlayerLeftMsg {
+  playerId: number;
+}
+
 // ─── Socket.io 이벤트 이름 상수 ──────────────────────────────────
 
 export const SocketEvent = {
@@ -392,4 +397,5 @@ export const SocketEvent = {
   TOWER_BOX_DAMAGED: 'tower_box_damaged',
   TOWER_BOX_BROKEN: 'tower_box_broken',
   OWNERSHIP_TRANSFERRED: 'ownership_transferred',
+  PLAYER_LEFT: 'player_left',
 } as const;
