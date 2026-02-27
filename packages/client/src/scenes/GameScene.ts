@@ -858,26 +858,26 @@ export class GameScene extends Phaser.Scene {
     const bg = this.add.circle(px, py, spawnRadius, this.getTeamColorDark(ownerId), 0.9);
     this.tilesLayer.add(bg);
 
-    // HP 바 배경
+    // HP 바 배경 (숨김 — 타워 박스 파괴 후 활성화 시 표시)
     const hpBarBg = this.add.rectangle(
       px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
       TILE_SIZE - 4, HP_BAR_HEIGHT, 0x333333,
-    );
+    ).setVisible(false);
     this.tilesLayer.add(hpBarBg);
 
-    // HP 바
+    // HP 바 (숨김)
     const hpBar = this.add.rectangle(
       px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
       TILE_SIZE - 4, HP_BAR_HEIGHT, getHpColor(1.0),
-    );
+    ).setVisible(false);
     this.tilesLayer.add(hpBar);
 
-    // HP 텍스트
+    // HP 텍스트 (숨김)
     const label = this.add.text(px, py + 4, toAbbreviatedString(maxHp), {
       fontSize: '14px',
       color: '#ffffff',
       fontStyle: 'bold',
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setVisible(false);
     this.tilesLayer.add(label);
 
     // 발사 방향 화살표 (Direction enum 기준)
@@ -1891,6 +1891,7 @@ export class GameScene extends Phaser.Scene {
       visual.bg.setAlpha(1);
       visual.hpBar.setVisible(true);
       visual.hpBarBg.setVisible(true);
+      visual.label.setVisible(true);
       visual.dirArrow.setVisible(true);
       visual.label.setText(toAbbreviatedString(msg.hp)).setColor('#ffffff');
 
@@ -2024,6 +2025,7 @@ export class GameScene extends Phaser.Scene {
           spVisual.bg.setAlpha(1);
           spVisual.hpBar.setVisible(true);
           spVisual.hpBarBg.setVisible(true);
+          spVisual.label.setVisible(true);
           spVisual.dirArrow.setVisible(true);
           spVisual.label.setText(toAbbreviatedString(st.hp)).setColor('#ffffff');
           // 방향 화살표 색상 업데이트
@@ -2503,9 +2505,9 @@ export class GameScene extends Phaser.Scene {
       .setDepth(4);
     this.tilesLayer.add(lockOverlay);
 
-    // HP 바 (잠긴 상태에서는 숨김)
+    // HP 바
     const hpBarBg = this.add.rectangle(px, py + S / 2 - HP_BAR_HEIGHT, S - 4, HP_BAR_HEIGHT, 0x333333)
-      .setOrigin(0.5).setDepth(4).setVisible(false);
+      .setOrigin(0.5).setDepth(4);
     this.tilesLayer.add(hpBarBg);
 
     const ratio = hp / maxHp;
@@ -2514,13 +2516,13 @@ export class GameScene extends Phaser.Scene {
       px - fullW / 2 * (1 - ratio),
       py + S / 2 - HP_BAR_HEIGHT,
       fullW * ratio, HP_BAR_HEIGHT, 0xffaa22,
-    ).setOrigin(0.5).setDepth(4).setVisible(false);
+    ).setOrigin(0.5).setDepth(4);
     this.tilesLayer.add(hpBar);
 
     const hpText = this.add.text(px, py - S * 0.12, this.formatHp(hp), {
       fontSize: '10px', color: '#ffffff', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 2,
-    }).setOrigin(0.5).setDepth(5).setVisible(false);
+    }).setOrigin(0.5).setDepth(5);
     this.tilesLayer.add(hpText);
 
     this.towerBoxVisuals.set(spawnId, { bg, lockOverlay, hpBar, hpBarBg, hpText, spawnId, maxHp, currentHp: hp });
@@ -2532,13 +2534,6 @@ export class GameScene extends Phaser.Scene {
 
     const damage = visual.currentHp - hp;
     visual.currentHp = hp;
-
-    // 첫 데미지 시 HP 바 표시
-    if (damage > 0) {
-      visual.hpBar.setVisible(true);
-      visual.hpBarBg.setVisible(true);
-      visual.hpText.setVisible(true);
-    }
 
     const ratio = hp / maxHp;
     const S = TILE_SIZE - 2;
