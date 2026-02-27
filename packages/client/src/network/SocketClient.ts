@@ -179,13 +179,11 @@ export class SocketClient {
 
   placeReflector(x: number, y: number, type: ReflectorType): void {
     const msg: PlaceReflectorMsg = { x, y, type };
-    console.log(`[SocketClient] 반사판 설치 전송: (${x},${y}) type=${type} connected=${this.socket.connected}`);
     this.socket.emit(SocketEvent.PLACE_REFLECTOR, msg);
   }
 
   removeReflector(x: number, y: number): void {
     const msg: RemoveReflectorMsg = { x, y };
-    console.log(`[SocketClient] 반사판 해제 전송: (${x},${y}) connected=${this.socket.connected}`);
     this.socket.emit(SocketEvent.REMOVE_REFLECTOR, msg);
   }
 

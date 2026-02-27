@@ -1288,6 +1288,9 @@ export class GameScene extends Phaser.Scene {
           const key = `${gridX},${gridY}`;
           const existing = this.reflectorVisuals.get(key);
           if (existing && existing.playerId === this.myPlayerId) {
+            this.sfx.reflectorRemove();
+            this.removeReflectorVisual(gridX, gridY);
+            this.updateReflectorCount();
             this.socket.removeReflector(gridX, gridY);
           }
         }
@@ -1373,15 +1376,24 @@ export class GameScene extends Phaser.Scene {
           this.shakeReflectorStockWarning();
           return;
         }
+        this.sfx.reflectorPlace();
+        this.drawReflector(gridX, gridY, ReflectorType.Slash, this.myPlayerId);
+        animReflectorPlace(this, this.tilesLayer, gridX, gridY, this.getTeamColor(this.myPlayerId));
+        this.updateReflectorCount();
         this.socket.placeReflector(gridX, gridY, ReflectorType.Slash);
       } else if (existing.playerId !== this.myPlayerId) {
         // 상대 반사판 → 무시
         return;
       } else if (existing.type === ReflectorType.Slash) {
         // Slash → Backslash: 기존 타일 교체는 스톡 소모 없음
+        this.sfx.reflectorPlace();
+        this.drawReflector(gridX, gridY, ReflectorType.Backslash, this.myPlayerId);
         this.socket.placeReflector(gridX, gridY, ReflectorType.Backslash);
       } else {
         // Backslash → 제거
+        this.sfx.reflectorRemove();
+        this.removeReflectorVisual(gridX, gridY);
+        this.updateReflectorCount();
         this.socket.removeReflector(gridX, gridY);
       }
     });
@@ -1908,6 +1920,7 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onReflectorPlaced = (msg: ReflectorPlacedMsg) => {
+      if (msg.playerId === this.myPlayerId) return; // 내 것은 이미 낙관적으로 렌더됨
       this.sfx.reflectorPlace();
       this.drawReflector(msg.x, msg.y, msg.type, msg.playerId);
       animReflectorPlace(this, this.tilesLayer, msg.x, msg.y, this.getTeamColor(msg.playerId));
@@ -1915,21 +1928,9 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.socket.onReflectorRemoved = (msg: ReflectorRemovedMsg) => {
+      if (msg.playerId === this.myPlayerId) return; // 내 것은 이미 낙관적으로 제거됨
       this.sfx.reflectorRemove();
-      const key = `${msg.x},${msg.y}`;
-      const visual = this.reflectorVisuals.get(key);
-      if (visual) {
-        visual.graphics.destroy();
-        this.reflectorVisuals.delete(key);
-        // 팀색 배경: 1초에 걸쳐 페이드 아웃
-        const bg = visual.bg;
-        this.tweens.add({
-          targets: bg,
-          alpha: 0,
-          duration: 1000,
-          onComplete: () => bg.destroy(),
-        });
-      }
+      this.removeReflectorVisual(msg.x, msg.y);
       this.updateReflectorCount();
     };
 
@@ -2671,6 +2672,21 @@ export class GameScene extends Phaser.Scene {
     const overlay = this.add.rectangle(px, py, zoneW * TILE_SIZE, zoneH * TILE_SIZE, 0x000000, 0.55)
       .setDepth(20);
     this.tilesLayer.add(overlay);
+  }
+
+  private removeReflectorVisual(gridX: number, gridY: number): void {
+    const key = `${gridX},${gridY}`;
+    const visual = this.reflectorVisuals.get(key);
+    if (!visual) return;
+    visual.graphics.destroy();
+    this.reflectorVisuals.delete(key);
+    const bg = visual.bg;
+    this.tweens.add({
+      targets: bg,
+      alpha: 0,
+      duration: 1000,
+      onComplete: () => bg.destroy(),
+    });
   }
 
   private drawReflector(gridX: number, gridY: number, type: ReflectorType, playerId: number): void {
