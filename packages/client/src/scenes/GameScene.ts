@@ -853,26 +853,26 @@ export class GameScene extends Phaser.Scene {
     const bg = this.add.circle(px, py, spawnRadius, this.getTeamColorDark(ownerId), 0.9);
     this.tilesLayer.add(bg);
 
-    // HP 바 배경 (숨김 — 타워 박스 파괴 후 활성화 시 표시)
+    // HP 바 배경
     const hpBarBg = this.add.rectangle(
       px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
       TILE_SIZE - 4, HP_BAR_HEIGHT, 0x333333,
-    ).setVisible(false);
+    );
     this.tilesLayer.add(hpBarBg);
 
-    // HP 바 (숨김)
+    // HP 바
     const hpBar = this.add.rectangle(
       px, py - TILE_SIZE / 2 + HP_BAR_HEIGHT,
       TILE_SIZE - 4, HP_BAR_HEIGHT, getHpColor(1.0),
-    ).setVisible(false);
+    );
     this.tilesLayer.add(hpBar);
 
-    // HP 텍스트 (숨김)
+    // HP 텍스트
     const label = this.add.text(px, py + 4, toAbbreviatedString(maxHp), {
       fontSize: '17px',
       color: '#ffffff',
       fontStyle: 'bold',
-    }).setOrigin(0.5).setVisible(false);
+    }).setOrigin(0.5);
     this.tilesLayer.add(label);
 
     // 발사 방향 화살표 (Direction enum 기준)
@@ -2496,6 +2496,14 @@ export class GameScene extends Phaser.Scene {
   // === 타워 박스 비주얼 ===
 
   private createTowerBoxVisual(gridX: number, gridY: number, spawnId: number, hp: number, maxHp: number): void {
+    // 잠긴 타워: 스폰 타워 HP 숨김 (타워 박스 HP로 대체)
+    const spawnVisual = this.spawnVisuals.get(spawnId);
+    if (spawnVisual) {
+      spawnVisual.hpBar.setVisible(false);
+      spawnVisual.hpBarBg.setVisible(false);
+      spawnVisual.label.setVisible(false);
+    }
+
     const px = gridX * TILE_SIZE + TILE_SIZE / 2;
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
     const S = TILE_SIZE - 2;
