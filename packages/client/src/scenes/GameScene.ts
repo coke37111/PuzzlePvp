@@ -59,8 +59,7 @@ import {
   BALL_TEAM_COLORS,
   MONSTER_COLORS, MONSTER_BORDERS, ITEM_COLORS,
   BG_COLOR,
-  TILE_EMPTY_COLOR, TILE_P1_SPAWN_COLOR, TILE_P2_SPAWN_COLOR,
-  TILE_P1_CORE_COLOR, TILE_P2_CORE_COLOR,
+  TILE_EMPTY_COLOR,
   TILE_BLOCK_COLOR, TILE_BLOCK_X_COLOR, TILE_BLOCK_X_ALPHA,
   HOVER_COLOR, HOVER_ALPHA,
   GLOW_RADIUS_EXTRA, GLOW_ALPHA,
@@ -104,6 +103,8 @@ interface MonsterVisual {
   hpText: Phaser.GameObjects.Text;
   maxHp: number;
   currentHp: number;
+  gridX: number;
+  gridY: number;
 }
 
 interface ItemVisual {
@@ -241,7 +242,6 @@ export class GameScene extends Phaser.Scene {
   private spawnGaugeFill: Phaser.GameObjects.Rectangle | null = null;
   private spawnGaugeFiring: boolean = false;
   private phaseCount: number = 0;
-  private phaseText: Phaser.GameObjects.Text | null = null;
 
   // 애니메이션 보조
   private hpTweens: Map<string, Phaser.Tweens.Tween> = new Map();
@@ -255,6 +255,7 @@ export class GameScene extends Phaser.Scene {
   private inaccessibleZoneTiles: Set<string> = new Set();
   private inaccessibleZoneOverlays: Phaser.GameObjects.Rectangle[] = [];
   private capturedZones: Map<number, number> = new Map(); // oldOwnerId → capturedByPlayerId
+  private eliminatedZoneOverlays: Map<number, Phaser.GameObjects.Rectangle> = new Map(); // playerId → overlay
   // 반사판 스톡 UI
   private reflectorCooldown: number = 3.0;
   private maxReflectorStock: number = 5;
@@ -358,6 +359,7 @@ export class GameScene extends Phaser.Scene {
     this.inaccessibleZoneTiles.clear();
     this.inaccessibleZoneOverlays = [];
     this.capturedZones.clear();
+    this.eliminatedZoneOverlays.clear();
     this.hoverHighlight = null;
     this.wallMode = false;
     this.swordMode = false;
@@ -373,7 +375,6 @@ export class GameScene extends Phaser.Scene {
     this.spawnGaugeFill = null;
     this.spawnGaugeFiring = false;
     this.phaseCount = 0;
-    this.phaseText = null;
     this.reflectorCountTexts = [null, null];
     this.itemSlotWallBg = null;
     this.itemSlotWallText = null;
@@ -545,7 +546,7 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0, 0).setDepth(5);
       // 반사판 아이콘 텍스트 (/)
       const iconText = this.add.text(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, '/', {
-        fontSize: '14px', color: '#aaaaff', fontStyle: 'bold',
+        fontSize: '17px', color: '#aaaaff', fontStyle: 'bold',
       }).setOrigin(0.5).setDepth(6);
       // 쿨다운 필: 아이콘 위에 겹쳐서 아래→위로 채워짐 (depth 7 > icon 6)
       const fill = this.add.rectangle(sx, sy + this.SLOT_SIZE, this.SLOT_SIZE, 0, 0x4466ff, 0.75)
@@ -554,7 +555,7 @@ export class GameScene extends Phaser.Scene {
         .setData('slotH', this.SLOT_SIZE);
       // 잠금 슬롯 카운트다운 텍스트 (타워 파괴 시 리젠 시간 표시, depth 8)
       const lockText = this.add.text(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, '', {
-        fontSize: '11px', color: '#ff6666', fontStyle: 'bold',
+        fontSize: '13px', color: '#ff6666', fontStyle: 'bold',
         stroke: '#000000', strokeThickness: 2,
       }).setOrigin(0.5).setDepth(8).setVisible(false);
 
@@ -829,16 +830,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getTileColor(tileIdx: number): number {
-    // 스폰/코어 타일은 상대적 관점 적용: 내 타일=파란, 적 타일=빨간
     switch (tileIdx) {
-      case 2: case 4: // P1 스폰
-        return this.myPlayerId === 0 ? TILE_P1_SPAWN_COLOR : TILE_P2_SPAWN_COLOR;
-      case 3: case 5: // P2 스폰
-        return this.myPlayerId === 1 ? TILE_P1_SPAWN_COLOR : TILE_P2_SPAWN_COLOR;
-      case 6: // P1 코어
-        return this.myPlayerId === 0 ? TILE_P1_CORE_COLOR : TILE_P2_CORE_COLOR;
-      case 8: // P2 코어
-        return this.myPlayerId === 1 ? TILE_P1_CORE_COLOR : TILE_P2_CORE_COLOR;
+      case 2: case 3: case 4: case 5: // 스폰 타일 — 원형 비주얼이 소유권 표시
+      case 6: case 8: // 코어 타일 — createCoreVisual이 소유권 표시
+        return TILE_EMPTY_COLOR;
       case 7: return TILE_BLOCK_COLOR;
       default: return TILE_EMPTY_COLOR;
     }
@@ -874,7 +869,7 @@ export class GameScene extends Phaser.Scene {
 
     // HP 텍스트 (숨김)
     const label = this.add.text(px, py + 4, toAbbreviatedString(maxHp), {
-      fontSize: '14px',
+      fontSize: '17px',
       color: '#ffffff',
       fontStyle: 'bold',
     }).setOrigin(0.5).setVisible(false);
@@ -930,7 +925,7 @@ export class GameScene extends Phaser.Scene {
     const py = gridY * TILE_SIZE + TILE_SIZE / 2;
 
     // 배경 (진한 팀 색상)
-    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, this.getTeamColorDark(ownerId), 0.7);
+    const bg = this.add.rectangle(px, py, TILE_SIZE - 2, TILE_SIZE - 2, this.getTeamColorDark(ownerId), 0.9);
     this.tilesLayer.add(bg);
 
     // HP 바 배경
@@ -961,7 +956,7 @@ export class GameScene extends Phaser.Scene {
 
     // HP 텍스트
     const label = this.add.text(px, py + 8, toAbbreviatedString(maxHp), {
-      fontSize: '12px',
+      fontSize: '14px',
       color: '#ffff88',
       fontStyle: 'bold',
     }).setOrigin(0.5);
@@ -1112,7 +1107,7 @@ export class GameScene extends Phaser.Scene {
 
     let remaining = Math.ceil(duration);
     const text = this.add.text(px, py, String(remaining), {
-      fontSize: '18px',
+      fontSize: '21px',
       color: '#000000',
       stroke: '#ffffff',
       strokeThickness: 3,
@@ -1384,6 +1379,9 @@ export class GameScene extends Phaser.Scene {
           this.shakeReflectorStockWarning();
           return;
         }
+        // 몬스터가 있는 타일에는 설치 불가
+        const hasMonster = [...this.monsterVisuals.values()].some(m => m.gridX === gridX && m.gridY === gridY);
+        if (hasMonster) return;
         this.sfx.reflectorPlace();
         this.drawReflector(gridX, gridY, ReflectorType.Slash, this.myPlayerId);
         animReflectorPlace(this, this.tilesLayer, gridX, gridY, this.getTeamColor(this.myPlayerId));
@@ -1480,7 +1478,7 @@ export class GameScene extends Phaser.Scene {
     const { width, height } = this.scale;
     // 상단 중앙: 남은 유저 수 (N인 모드에서 유용)
     const remText = this.add.text(width / 2, 4, `${this.totalPlayerCount}/${this.totalPlayerCount}명`, {
-      fontSize: '15px', color: '#ffffff', fontStyle: 'bold',
+      fontSize: '18px', color: '#ffffff', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5, 0).setDepth(10);
     this.remainingPlayersText = remText;
@@ -1496,7 +1494,7 @@ export class GameScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
     this.muteBtnText = this.add.text(btnX, btnY, initMuted ? '✕ OFF' : '♪ ON', {
-      fontSize: '11px', color: initMuted ? '#888888' : '#88ff88', fontStyle: 'bold',
+      fontSize: '13px', color: initMuted ? '#888888' : '#88ff88', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(11);
     this.uiLayer.add([this.muteBtnBg, this.muteBtnText]);
     this.muteBtnBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
@@ -1518,7 +1516,7 @@ export class GameScene extends Phaser.Scene {
 
     // 골드 표시 (슬롯 위)
     this.goldText = this.add.text(baseX, goldY, '💰 0', {
-      fontSize: '13px', color: '#FFD700', fontFamily: 'monospace',
+      fontSize: '15px', color: '#FFD700', fontFamily: 'monospace',
     }).setOrigin(0, 0.5).setDepth(10);
     this.uiLayer.add(this.goldText);
 
@@ -1528,12 +1526,12 @@ export class GameScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x886633)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    const wallEmoji = this.add.text(wallCX, slotY - 8, '🧱', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const wallEmoji = this.add.text(wallCX, slotY - 8, '🧱', { fontSize: '23px' }).setOrigin(0.5).setDepth(11);
     const wallKeyLabel = this.add.text(wallCX - SLOT / 2 + 4, slotY - SLOT / 2 + 4, '1', {
-      fontSize: '10px', color: '#aaaaaa',
+      fontSize: '12px', color: '#aaaaaa',
     }).setDepth(10);
     this.itemSlotWallText = this.add.text(wallCX, slotY + 18, `${ITEM_COST_WALL}g`, {
-      fontSize: '11px', color: '#ccaa44', fontFamily: 'monospace',
+      fontSize: '13px', color: '#ccaa44', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(10);
     this.uiLayer.add([this.itemSlotWallBg, wallEmoji, wallKeyLabel, this.itemSlotWallText]);
     this.itemSlotWallBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
@@ -1547,12 +1545,12 @@ export class GameScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x4466aa)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    const swordEmoji = this.add.text(swordCX, slotY - 8, '⚔️', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const swordEmoji = this.add.text(swordCX, slotY - 8, '⚔️', { fontSize: '23px' }).setOrigin(0.5).setDepth(11);
     const swordKeyLabel = this.add.text(swordCX - SLOT / 2 + 4, slotY - SLOT / 2 + 4, '2', {
-      fontSize: '10px', color: '#aaaaaa',
+      fontSize: '12px', color: '#aaaaaa',
     }).setDepth(10);
     this.itemSlotSwordText = this.add.text(swordCX, slotY + 18, `${ITEM_COST_SWORD}g`, {
-      fontSize: '11px', color: '#4488cc', fontFamily: 'monospace',
+      fontSize: '13px', color: '#4488cc', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(10);
     this.uiLayer.add([this.itemSlotSwordBg, swordEmoji, swordKeyLabel, this.itemSlotSwordText]);
     this.itemSlotSwordBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
@@ -1566,12 +1564,12 @@ export class GameScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x2255aa)
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
-    const shieldEmoji = this.add.text(shieldCX, slotY - 8, '🛡️', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    const shieldEmoji = this.add.text(shieldCX, slotY - 8, '🛡️', { fontSize: '23px' }).setOrigin(0.5).setDepth(11);
     const shieldKeyLabel = this.add.text(shieldCX - SLOT / 2 + 4, slotY - SLOT / 2 + 4, '3', {
-      fontSize: '10px', color: '#aaaaaa',
+      fontSize: '12px', color: '#aaaaaa',
     }).setDepth(10);
     this.itemSlotShieldText = this.add.text(shieldCX, slotY + 18, `${ITEM_COST_SHIELD}g`, {
-      fontSize: '11px', color: '#2266cc', fontFamily: 'monospace',
+      fontSize: '13px', color: '#2266cc', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(10);
     this.uiLayer.add([this.itemSlotShieldBg, shieldEmoji, shieldKeyLabel, this.itemSlotShieldText]);
     this.itemSlotShieldBg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
@@ -1579,29 +1577,25 @@ export class GameScene extends Phaser.Scene {
       this.toggleShieldMode();
     });
 
-    const helpText = this.add.text(width / 2, 8, '터치: / → \\ → 제거 | 우클릭: 제거', {
-      fontSize: '10px',
-      color: '#555566',
-    }).setOrigin(0.5, 0);
-    this.uiLayer.add(helpText);
+
 
     // 성벽 모드 안내 텍스트
     this.wallModeText = this.add.text(
       width / 2, height / 2 - 120,
       '🧱 성벽 설치 모드\n클릭: 설치 | 우클릭/ESC: 취소',
-      { fontSize: '14px', color: '#ddaa44', fontStyle: 'bold', align: 'center', backgroundColor: '#00000088', padding: { x: 10, y: 6 } },
+      { fontSize: '17px', color: '#ddaa44', fontStyle: 'bold', align: 'center', backgroundColor: '#00000088', padding: { x: 10, y: 6 } },
     ).setOrigin(0.5).setDepth(100).setVisible(false);
     this.uiLayer.add(this.wallModeText);
 
     // 칼 모드 안내 텍스트
     this.swordModeText = this.add.text(width / 2, height / 2 - 80, '⚔️ 칼 모드: 적 반사판 클릭', {
-      fontSize: '18px', color: '#4488ff', backgroundColor: '#00000099', padding: { x: 12, y: 6 },
+      fontSize: '21px', color: '#4488ff', backgroundColor: '#00000099', padding: { x: 12, y: 6 },
     }).setOrigin(0.5).setDepth(20).setVisible(false);
     this.uiLayer.add(this.swordModeText);
 
     // 쉴드 모드 안내 텍스트
     this.shieldModeText = this.add.text(width / 2, height / 2 - 80, '🛡️ 쉴드 모드: 내 타워/코어/방어벽 클릭', {
-      fontSize: '18px', color: '#4466ff', backgroundColor: '#00000099', padding: { x: 12, y: 6 },
+      fontSize: '21px', color: '#4466ff', backgroundColor: '#00000099', padding: { x: 12, y: 6 },
     }).setOrigin(0.5).setDepth(20).setVisible(false);
     this.uiLayer.add(this.shieldModeText);
 
@@ -1611,15 +1605,6 @@ export class GameScene extends Phaser.Scene {
       if (this.swordMode) this.setSwordMode(false);
       if (this.shieldMode) this.setShieldMode(false);
     });
-
-    // 페이즈 카운터 (상단 게이지 왼쪽)
-    const phaseY = 7;
-    this.phaseText = this.add.text(8, phaseY, '1', {
-      fontSize: '14px',
-      color: '#44ccff',
-      fontStyle: 'bold',
-    }).setOrigin(0, 0).setDepth(5).setAlpha(0.7);
-    this.uiLayer.add(this.phaseText);
 
     // 스폰 타이밍 게이지 (상단)
     this.spawnGaugeBg = this.add.rectangle(0, 0, width, SPAWN_GAUGE_HEIGHT, 0x111133)
@@ -1639,16 +1624,6 @@ export class GameScene extends Phaser.Scene {
       this.phaseCount = phaseNumber;
     } else {
       this.phaseCount++;
-    }
-    if (this.phaseText) {
-      this.phaseText.setText(toAbbreviatedString(this.phaseCount));
-      this.tweens.add({
-        targets: this.phaseText,
-        scaleX: 1.5, scaleY: 1.5,
-        duration: 80,
-        ease: 'Sine.easeOut',
-        yoyo: true,
-      });
     }
     this.spawnGaugeFill.scaleX = 0;
     this.spawnGaugeFill.setFillStyle(SPAWN_GAUGE_COLOR);
@@ -1691,7 +1666,7 @@ export class GameScene extends Phaser.Scene {
   private showToast(message: string): void {
     const { width, height } = this.scale;
     const toast = this.add.text(width / 2, height - 50, message, {
-      fontSize: '13px',
+      fontSize: '15px',
       color: '#ffffff',
       backgroundColor: '#442222',
       padding: { x: 12, y: 6 },
@@ -1959,20 +1934,38 @@ export class GameScene extends Phaser.Scene {
 
     this.socket.onPlayerEliminated = (msg) => {
       this.remainingPlayersText?.setText(`${msg.remainingPlayers}/${this.totalPlayerCount}명`);
-      // 탈락 존 시각적 표시 (N인 모드, 자신 제외, 내가 점령한 존 제외)
-      if (this.layout && msg.playerId !== this.myPlayerId) {
-        if (this.capturedZones.get(msg.playerId) === this.myPlayerId) return;
+
+      if (msg.playerId === this.myPlayerId) {
+        // 내 코어가 점령당함 → 즉각적 피드백 표시 (ResultScene은 onGameOver에서 1초 후 표시)
+        const { width, height } = this.scale;
+        const flash = this.add.rectangle(width / 2, height / 2, width, height, 0xff0000, 0)
+          .setScrollFactor(0).setDepth(100);
+        this.uiLayer.add(flash);
+        this.tweens.add({
+          targets: flash,
+          alpha: 0.35,
+          duration: 200,
+          yoyo: true,
+          onComplete: () => flash.destroy(),
+        });
+        return;
+      }
+
+      // 탈락 존 시각적 표시 (N인 모드, 자신 제외)
+      // capturedZones는 OWNERSHIP_TRANSFERRED 이후 갱신되므로 여기서는 체크하지 않음
+      // → onOwnershipTransferred에서 점령 시 오버레이를 제거함
+      if (this.layout) {
         const zone = this.layout.zones.find(z => z.playerId === msg.playerId);
-        if (zone) this.showEliminatedZoneOverlay(zone.originX, zone.originY, zone.width, zone.height);
+        if (zone) this.showEliminatedZoneOverlay(msg.playerId, zone.originX, zone.originY, zone.width, zone.height);
       }
     };
 
     this.socket.onPlayerLeft = (msg: PlayerLeftMsg) => {
-      // 게임 이탈 유저 딤드 처리 (N인 모드, 자신 제외, 내가 점령한 존 제외)
+      // 게임 이탈 유저 딤드 처리 (N인 모드, 자신 제외)
+      // 점령 여부는 onOwnershipTransferred에서 오버레이 제거로 처리
       if (this.layout && msg.playerId !== this.myPlayerId) {
-        if (this.capturedZones.get(msg.playerId) === this.myPlayerId) return;
         const zone = this.layout.zones.find(z => z.playerId === msg.playerId);
-        if (zone) this.showEliminatedZoneOverlay(zone.originX, zone.originY, zone.width, zone.height);
+        if (zone) this.showEliminatedZoneOverlay(msg.playerId, zone.originX, zone.originY, zone.width, zone.height);
       }
     };
 
@@ -2053,6 +2046,10 @@ export class GameScene extends Phaser.Scene {
 
       // 점령 기록 + 격벽 오버레이 재계산
       this.capturedZones.set(msg.oldOwnerId, msg.newOwnerId);
+      // 내가 점령한 경우: 적 구역 어둠 오버레이 제거 (점령 영역은 내 영역)
+      if (msg.newOwnerId === this.myPlayerId) {
+        this.removeEliminatedZoneOverlay(msg.oldOwnerId);
+      }
       this.rebuildInaccessibleZoneOverlays();
     };
 
@@ -2199,7 +2196,7 @@ export class GameScene extends Phaser.Scene {
       this.add.text(
         this.scale.width / 2, this.scale.height / 2,
         'Disconnected',
-        { fontSize: '20px', color: '#ff4444' },
+        { fontSize: '23px', color: '#ff4444' },
       ).setOrigin(0.5);
     };
   }
@@ -2239,7 +2236,7 @@ export class GameScene extends Phaser.Scene {
     const hpBar = this.add.rectangle(0, s + HP_BAR_HEIGHT + 1, TILE_SIZE - 4, HP_BAR_HEIGHT, getHpColor(hp / maxHp)).setOrigin(0.5);
     // HP 텍스트
     const hpText = this.add.text(0, 0, toAbbreviatedString(hp), {
-      fontSize: '12px', color: '#ffffff', fontStyle: 'bold',
+      fontSize: '14px', color: '#ffffff', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5);
 
@@ -2247,12 +2244,14 @@ export class GameScene extends Phaser.Scene {
     container.setDepth(4);
     this.tilesLayer.add(container);
 
-    this.monsterVisuals.set(id, { id, container, hpBar, hpBarBg, hpText, maxHp, currentHp: hp });
+    this.monsterVisuals.set(id, { id, container, hpBar, hpBarBg, hpText, maxHp, currentHp: hp, gridX, gridY });
   }
 
   private moveMonster(id: number, toGridX: number, toGridY: number): void {
     const mv = this.monsterVisuals.get(id);
     if (!mv) return;
+    mv.gridX = toGridX;
+    mv.gridY = toGridY;
     const toX = toGridX * TILE_SIZE + TILE_SIZE / 2;
     const toY = toGridY * TILE_SIZE + TILE_SIZE / 2;
     this.tweens.killTweensOf(mv.container);
@@ -2444,7 +2443,7 @@ export class GameScene extends Phaser.Scene {
     this.tilesLayer.add(hpBar);
 
     const hpText = this.add.text(px, py, this.formatHp(hp), {
-      fontSize: '11px', color: '#ffffff', fontStyle: 'bold',
+      fontSize: '13px', color: '#ffffff', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5);
     this.tilesLayer.add(hpText);
@@ -2526,7 +2525,7 @@ export class GameScene extends Phaser.Scene {
     this.tilesLayer.add(hpBar);
 
     const hpText = this.add.text(px, py - S * 0.12, this.formatHp(hp), {
-      fontSize: '10px', color: '#ffffff', fontStyle: 'bold',
+      fontSize: '12px', color: '#ffffff', fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(5);
     this.tilesLayer.add(hpText);
@@ -2639,7 +2638,7 @@ export class GameScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
       .setDepth(10);
     const label = this.add.text(btnX, btnY, '내 맵', {
-      fontSize: '13px', color: '#aaccff', fontStyle: 'bold',
+      fontSize: '15px', color: '#aaccff', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(11);
     this.uiLayer.add([btn, label]);
     this.myMapFocusBtn = btn;
@@ -2679,12 +2678,22 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private showEliminatedZoneOverlay(originX: number, originY: number, zoneW: number, zoneH: number): void {
+  private showEliminatedZoneOverlay(playerId: number, originX: number, originY: number, zoneW: number, zoneH: number): void {
+    if (this.eliminatedZoneOverlays.has(playerId)) return; // 중복 방지
     const px = originX * TILE_SIZE + (zoneW * TILE_SIZE) / 2;
     const py = originY * TILE_SIZE + (zoneH * TILE_SIZE) / 2;
     const overlay = this.add.rectangle(px, py, zoneW * TILE_SIZE, zoneH * TILE_SIZE, 0x000000, 0.55)
       .setDepth(20);
     this.tilesLayer.add(overlay);
+    this.eliminatedZoneOverlays.set(playerId, overlay);
+  }
+
+  private removeEliminatedZoneOverlay(playerId: number): void {
+    const overlay = this.eliminatedZoneOverlays.get(playerId);
+    if (overlay) {
+      overlay.destroy();
+      this.eliminatedZoneOverlays.delete(playerId);
+    }
   }
 
   private removeReflectorVisual(gridX: number, gridY: number): void {

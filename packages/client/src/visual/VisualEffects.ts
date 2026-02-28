@@ -242,7 +242,7 @@ export function animHealPopup(
   amount: number = 1,
 ): void {
   const text = scene.add.text(worldX, worldY, `+${toAbbreviatedString(amount)}`, {
-    fontSize: '16px',
+    fontSize: '19px',
     color: '#44ff88',
     fontStyle: 'bold',
     stroke: '#000000',
@@ -286,7 +286,7 @@ export function animDamagePopup(
   damage: number,
 ): void {
   const text = scene.add.text(worldX, worldY, `-${toAbbreviatedString(damage)}`, {
-    fontSize: '16px',
+    fontSize: '19px',
     color: '#ffffff',
     fontStyle: 'bold',
     stroke: '#000000',

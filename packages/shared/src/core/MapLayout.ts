@@ -144,10 +144,10 @@ export function generateNPlayerBattleMap(playerCount: number): GeneratedMap {
 
   // 타워 위치 정의 (존 로컬 좌표, 코어 (4,4) 기준 대각선 2칸)
   const towerDefs = [
-    { lx: 3, ly: 2, dir: Direction.Up },     // 좌상 → 위로 발사
-    { lx: 5, ly: 2, dir: Direction.Right },  // 우상 → 오른쪽으로 발사
-    { lx: 5, ly: 6, dir: Direction.Down },   // 우하 → 아래로 발사
-    { lx: 3, ly: 6, dir: Direction.Left },   // 좌하 → 왼쪽으로 발사
+    { lx: 3, ly: 3, dir: Direction.Up },     // 좌상 → 위로 발사
+    { lx: 5, ly: 3, dir: Direction.Right },  // 우상 → 오른쪽으로 발사
+    { lx: 5, ly: 5, dir: Direction.Down },   // 우하 → 아래로 발사
+    { lx: 3, ly: 5, dir: Direction.Left },   // 좌하 → 왼쪽으로 발사
   ];
 
   let playerIdx = 0;
