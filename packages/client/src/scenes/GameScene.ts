@@ -2585,6 +2585,14 @@ export class GameScene extends Phaser.Scene {
       },
     });
     this.towerBoxVisuals.delete(spawnId);
+
+    // 잠금 해제된 스폰 타워 HP 표시
+    const spawnVisual = this.spawnVisuals.get(spawnId);
+    if (spawnVisual) {
+      spawnVisual.hpBar.setVisible(true);
+      spawnVisual.hpBarBg.setVisible(true);
+      spawnVisual.label.setVisible(true);
+    }
   }
 
   private drawShieldVisual(targetType: 'spawn' | 'core' | 'wall', targetId: string): void {
